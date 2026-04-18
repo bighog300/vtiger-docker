@@ -19,7 +19,7 @@ chown www-data:www-data "${APP_ROOT}/config.inc.php"
 
 log "Waiting for MySQL..."
 for i in $(seq 1 60); do
-  mysqladmin ping -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" --silent 2>/dev/null && break
+  mysqladmin ping -h"${DB_HOST}" -P"${DB_PORT}" -uroot -p"${DB_ROOT_PASSWORD:-buildroot}" --silent 2>/dev/null && break
   [ "$i" = "60" ] && { err "MySQL not ready."; exit 1; }
   sleep 2
 done
