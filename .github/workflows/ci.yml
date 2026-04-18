@@ -11,7 +11,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@2.0.0
@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -46,8 +46,10 @@ jobs:
         run: |
           test -s schema.sql
           LINES=$(wc -l < schema.sql)
-          echo "schema.sql: ${LINES} lines"
+          BYTES=$(wc -c < schema.sql)
+          echo "schema.sql: ${LINES} lines / ${BYTES} bytes"
           test "${LINES}" -gt 100
+          test "${BYTES}" -gt 10000
 
       - name: Start runtime smoke-test stack
         run: |
@@ -72,9 +74,14 @@ jobs:
             -e VTIGER_SITE_URL=http://localhost:8080 \
             vtigercrm-ci:8.3.0
 
-      - name: Smoke check HTTP
+      - name: Smoke check HTTP and fail fast if app exited
         run: |
           for i in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Running}}' vtiger-ci-app 2>/dev/null || echo false)" != "true" ]; then
+              echo "App container exited early."
+              docker logs vtiger-ci-app || true
+              exit 1
+            fi
             code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080 || true)"
             if [ "$code" != "000" ] && [ -n "$code" ]; then
               echo "Got HTTP ${code} — app is responding."
@@ -87,18 +94,28 @@ jobs:
           docker logs vtiger-ci-app || true
           exit 1
 
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p ci-artifacts
+          cp schema.sql ci-artifacts/schema.sql 2>/dev/null || true
+          docker logs vtiger-ci-app > ci-artifacts/runtime-app.log 2>&1 || true
+          docker logs vtiger-ci-mysql > ci-artifacts/runtime-mysql.log 2>&1 || true
+          docker logs vtiger-build-mysql > ci-artifacts/build-mysql.log 2>&1 || true
+          docker logs vtiger-build-installer > ci-artifacts/build-installer.log 2>&1 || true
+          docker compose -f docker-compose.build.yml logs > ci-artifacts/build-compose.log 2>&1 || true
+
       - name: Upload logs and schema on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: ci-logs-${{ github.sha }}
           retention-days: 7
-          path: schema.sql
+          path: ci-artifacts
 
       - name: Tear down
         if: always()
         run: |
-          docker logs vtiger-ci-app 2>/dev/null | tail -50 || true
           docker rm -f vtiger-ci-app vtiger-ci-mysql || true
           docker network rm vtiger-ci || true
           docker compose -f docker-compose.build.yml down -v || true

@@ -13,10 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Build installer image
+        run: docker compose -f docker-compose.build.yml build installer
 
       - name: Run full build pipeline
         run: IMAGE=vtigercrm-nightly VERSION=8.3.0 ./build.sh --no-push
@@ -25,10 +28,12 @@ jobs:
         run: |
           test -s schema.sql
           LINES=$(wc -l < schema.sql)
-          echo "schema.sql: ${LINES} lines"
+          BYTES=$(wc -c < schema.sql)
+          echo "schema.sql: ${LINES} lines / ${BYTES} bytes"
           test "${LINES}" -gt 100
+          test "${BYTES}" -gt 10000
 
-      - name: Start runtime and smoke check
+      - name: Start runtime smoke-test stack
         run: |
           docker network create vtiger-nightly || true
           docker run -d --name vtiger-nightly-mysql --network vtiger-nightly \
@@ -50,7 +55,15 @@ jobs:
             -e DB_ROOT_PASSWORD=root \
             -e VTIGER_SITE_URL=http://localhost:8080 \
             vtigercrm-nightly:8.3.0
+
+      - name: Smoke check HTTP and fail fast if app exited
+        run: |
           for i in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Running}}' vtiger-nightly-app 2>/dev/null || echo false)" != "true" ]; then
+              echo "App container exited early."
+              docker logs vtiger-nightly-app || true
+              exit 1
+            fi
             code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080 || true)"
             if [ "$code" != "000" ] && [ -n "$code" ]; then
               echo "HTTP ${code} — app is up."
@@ -63,13 +76,24 @@ jobs:
           docker logs vtiger-nightly-app || true
           exit 1
 
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p nightly-artifacts
+          cp schema.sql nightly-artifacts/schema.sql 2>/dev/null || true
+          docker logs vtiger-nightly-app > nightly-artifacts/runtime-app.log 2>&1 || true
+          docker logs vtiger-nightly-mysql > nightly-artifacts/runtime-mysql.log 2>&1 || true
+          docker logs vtiger-build-mysql > nightly-artifacts/build-mysql.log 2>&1 || true
+          docker logs vtiger-build-installer > nightly-artifacts/build-installer.log 2>&1 || true
+          docker compose -f docker-compose.build.yml logs > nightly-artifacts/build-compose.log 2>&1 || true
+
       - name: Upload artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
-          name: nightly-debug
+          name: nightly-debug-${{ github.sha }}
           retention-days: 7
-          path: schema.sql
+          path: nightly-artifacts
 
       - name: Cleanup
         if: always()

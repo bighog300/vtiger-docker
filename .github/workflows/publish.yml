@@ -21,13 +21,13 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -45,38 +45,11 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - name: Start MySQL
-        run: |
-          docker compose -f docker-compose.build.yml up -d mysql
-          echo "Waiting for MySQL to be healthy..."
-          for i in $(seq 1 60); do
-            docker inspect vtiger-build-mysql --format='{{.State.Health.Status}}' 2>/dev/null | grep -q healthy && { echo "MySQL healthy."; break; }
-            [ "$i" = "60" ] && { echo "ERROR: MySQL never became healthy."; exit 1; }
-            sleep 3
-          done
+      - name: Build installer image
+        run: docker compose -f docker-compose.build.yml build installer
 
-      - name: Build and run installer
-        run: |
-          docker compose -f docker-compose.build.yml build installer
-          if ! docker compose -f docker-compose.build.yml up --no-deps --exit-code-from installer installer; then
-            echo "Installer failed:"
-            docker logs vtiger-build-installer 2>&1 | tail -60
-            exit 1
-          fi
-          echo "Installer completed successfully."
-
-      - name: Export schema.sql
-        run: |
-          docker exec vtiger-build-mysql mysqldump \
-            -uroot -pbuildroot \
-            --no-tablespaces --single-transaction --routines --triggers \
-            vtiger > schema.sql
-          LINES=$(wc -l < schema.sql)
-          echo "schema.sql: ${LINES} lines"
-          test "${LINES}" -gt 100
-
-      - name: Tear down build stack
-        run: docker compose -f docker-compose.build.yml down -v
+      - name: Run build pipeline (install + schema export + runtime build)
+        run: IMAGE=${{ env.IMAGE_NAME }} VERSION=8.3.0 ./build.sh --no-push
 
       - name: Build and push runtime image
         uses: docker/build-push-action@v6
