@@ -52,7 +52,7 @@ jobs:
         run: IMAGE=${{ env.IMAGE_NAME }} VERSION=8.3.0 ./build.sh --no-push
 
       - name: Build and push runtime image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: runtime
