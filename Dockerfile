@@ -14,8 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfreetype6-dev \
         libxml2-dev \
         libzip-dev \
-        libkrb5-dev \
-        libc-client2007e-dev \
         libssl-dev \
         zlib1g-dev \
         libonig-dev \
@@ -29,8 +27,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xml \
         mbstring \
         soap \
-    && docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
-    && docker-php-ext-install -j$(nproc) imap \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -63,8 +59,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfreetype6 \
         libxml2 \
         libzip4 \
-        libkrb5-3 \
-        libc-client2007e \
         curl \
         rsync \
         gettext-base \
