@@ -612,6 +612,13 @@ run_install() {
       form_action=$(extract_form_action_for_mode "${body_file}" "Step2" || true)
     fi
     [ -n "${form_action}" ] || form_action=$(extract_form_action "${body_file}" || true)
+    if [ "${previous_step_mode}" = "Step2" ]; then
+      # Step2 template explicitly submits to index.php with method=get.
+      # Do not rely on generic first-form detection here because Step2 uses mode=Step3.
+      form_action="index.php"
+      log "Step2 detected; forcing form action to ${form_action}."
+    fi
+
     if [ -z "${form_action}" ]; then
       log "No installer form action found after step ${step_index}; assuming wizard finished or redirected."
       break
