@@ -2,7 +2,7 @@
 # build.sh — full vtiger 8.3.0 Docker build pipeline
 set -euo pipefail
 
-IMAGE="ghcr.io/bighog300/vtigercrm"
+IMAGE="vtigercrm-local"
 VERSION="8.3.0"
 NO_PUSH=false
 for arg in "$@"; do [ "$arg" = "--no-push" ] && NO_PUSH=true; done
