@@ -38,6 +38,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 RUN git clone --depth=1 https://github.com/bighog300/vtigercrm.git .
+RUN composer install --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader
 
 COPY init-scripts/install.sh        /build/install.sh
 COPY init-scripts/export-schema.sh  /build/export-schema.sh
