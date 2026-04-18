@@ -126,6 +126,7 @@ run_install() {
   local step_index
   local form_action
   local form_url
+  local request_method
   local post_args=()
 
   add_or_replace_field() {
@@ -167,6 +168,23 @@ run_install() {
           my $action = $1;
           $action =~ s/&amp;/&/g;
           print $action;
+          last;
+        }
+      }
+    ' "${html_file}" "${mode_value}"
+  }
+
+  extract_form_method_for_mode() {
+    local html_file="$1"
+    local mode_value="$2"
+    perl -0777 -ne '
+      my ($html, $mode) = @ARGV;
+      while ($html =~ m{(<form\b[^>]*>.*?</form>)}sig) {
+        my $form = $1;
+        next unless $form =~ /name=["'"'"']mode["'"'"'][^>]*value=["'"'"']\Q$mode\E["'"'"']/i
+          || $form =~ /value=["'"'"']\Q$mode\E["'"'"'][^>]*name=["'"'"']mode["'"'"']/i;
+        if ($form =~ /<form[^>]*method=["'"'"']([^"'"'"']+)["'"'"'][^>]*>/i) {
+          print lc $1;
           last;
         }
       }
@@ -608,16 +626,13 @@ run_install() {
 
   for step_index in $(seq 1 8); do
     form_action=""
+    request_method="post"
     if [ "${previous_step_mode}" = "Step2" ]; then
       form_action=$(extract_form_action_for_mode "${body_file}" "Step2" || true)
+      request_method=$(extract_form_method_for_mode "${body_file}" "Step2" || true)
+      request_method="${request_method:-post}"
     fi
     [ -n "${form_action}" ] || form_action=$(extract_form_action "${body_file}" || true)
-    if [ "${previous_step_mode}" = "Step2" ]; then
-      # Step2 template explicitly submits to index.php with method=get.
-      # Do not rely on generic first-form detection here because Step2 uses mode=Step3.
-      form_action="index.php"
-      log "Step2 detected; forcing form action to ${form_action}."
-    fi
 
     if [ -z "${form_action}" ]; then
       log "No installer form action found after step ${step_index}; assuming wizard finished or redirected."
@@ -633,14 +648,16 @@ run_install() {
 
     post_args=()
     if [ "${previous_step_mode}" = "Step2" ]; then
-      log "Step2 detected; using GET navigation submit (no POST replay)."
-      post_args=(
-        --get
-        --data-urlencode "module=Install"
-        --data-urlencode "view=Index"
-        --data-urlencode "mode=Step3"
-      )
-      log_payload_field_names "Step2 (GET request)"
+      log "Step2 detected; submitting mode transition with method=${request_method}."
+      append_hidden_fields_for_mode "${body_file}" "Step2"
+      append_step2_controls "${body_file}"
+      add_or_replace_field "module" "Install"
+      add_or_replace_field "view" "Index"
+      add_or_replace_field "mode" "Step3"
+      if [ "${request_method}" = "get" ]; then
+        post_args=(--get "${post_args[@]}")
+      fi
+      log_payload_field_names "Step2 (${request_method^^} request)"
     else
       append_hidden_fields "${body_file}"
       append_csrf_field "${body_file}"

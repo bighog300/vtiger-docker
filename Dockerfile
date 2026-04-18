@@ -1,3 +1,4 @@
+# hadolint global ignore=DL3008
 # ============================================================
 # Stage 1: builder
 # Clones vtiger source, compiles PHP extensions, runs installer.
