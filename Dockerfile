@@ -2,7 +2,7 @@
 # Stage 1: builder
 # Clones vtiger source, compiles PHP extensions, runs installer.
 # ============================================================
-FROM php:8.2-apache AS builder
+FROM php:8.2-apache-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
@@ -49,7 +49,7 @@ RUN chmod +x /build/install.sh /build/export-schema.sh
 # Copies compiled app + extensions from builder.
 # schema.sql is added by build.sh after installer runs.
 # ============================================================
-FROM php:8.2-apache AS runtime
+FROM php:8.2-apache-bookworm AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/bighog300/vtiger-docker"
 LABEL org.opencontainers.image.description="vtiger CRM 8.3.0"
@@ -61,7 +61,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libjpeg62-turbo \
         libfreetype6 \
         libxml2 \
-        libzip-dev \
+        libzip4 \
         libkrb5-3 \
         libc-client2007e \
         curl \
