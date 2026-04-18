@@ -1,6 +1,6 @@
 # vtiger-docker
 
-Docker packaging for [vtiger CRM 8.3.0](https://github.com/bighog300/vtigercrm).
+Docker packaging for [vtiger CRM 8.3.0](https://github.com/bighog300/vtigercrm) on PHP 8.3 (Debian Bookworm).
 
 The build produces a minimal runtime image (`ghcr.io/bighog300/vtigercrm`) containing
 the vtiger source, compiled PHP extensions, and a baked-in schema dump used for
@@ -51,6 +51,13 @@ docker compose up -d
 
 Open <http://localhost:8080> and log in with `admin` / `Admin@1234`.
 
+If you built a custom local image name, run:
+
+```bash
+IMAGE=vtigercrm-local VERSION=8.3.0 ./build.sh --no-push
+docker compose up -d
+```
+
 Tear down:
 ```bash
 docker compose down -v
@@ -69,7 +76,7 @@ docker compose -f docker-compose.build.yml build installer
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | PR, `workflow_dispatch` | Lint, full build, install, schema verify, smoke test |
-| `publish.yml` | Push to `main`, `v*` tags, `workflow_dispatch` | Build installer + push runtime to GHCR |
+| `publish.yml` | Push to `main`, `v*` tags, `workflow_dispatch` | Build installer, run full schema-generation pipeline, then publish runtime image to GHCR |
 | `nightly.yml` | Weekly Mon 03:00 UTC, `workflow_dispatch` | Scheduled full smoke test |
 
 ### Publish behaviour
@@ -83,14 +90,12 @@ Only the `runtime` stage is published. The `builder` stage is not pushed.
 
 ## Required GitHub repository settings
 
-1. **Actions → General → Workflow permissions** — set to *Read and write permissions*,
-   **or** confirm the default token has `packages: write` scope (the `publish.yml`
-   workflow declares this explicitly, so no extra setting is needed with default
-   repository permissions).
-2. **Package visibility** — after the first publish, visit
+1. **Actions → General → Workflow permissions** — allow `GITHUB_TOKEN` to write packages (`packages: write`).
+2. **GHCR package linkage** — if push fails with `permission_denied: write_package`, open the existing package settings and connect it to this repository so Actions can publish to it.
+3. **Package visibility** — after the first publish, visit
    `https://github.com/users/bighog300/packages/container/vtigercrm/settings`
    and set visibility to *Public* if desired.
-3. **Secrets** — no additional secrets are required; `GITHUB_TOKEN` is sufficient
+4. **Secrets** — no additional secrets are required; `GITHUB_TOKEN` is sufficient
    for pushing to GHCR.
 
 ## Environment variables (runtime)
