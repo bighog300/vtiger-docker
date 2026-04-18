@@ -121,6 +121,8 @@ run_install() {
   local current_url="${install_url}"
   local previous_step_label=""
   local current_step_label=""
+  local previous_step_mode=""
+  local current_step_mode=""
   local step_index
   local form_action
   local form_url
@@ -205,6 +207,15 @@ run_install() {
       $label =~ s/^\s+|\s+$//g;
       print $label;
     ' "${html_file}"
+  }
+
+  extract_hidden_mode() {
+    perl -0777 -ne '
+      if (/<input\b[^>]*name=["'"'"'"'"'"'"'"'"']mode["'"'"'"'"'"'"'"'"'][^>]*value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i) {
+        print $1;
+      } elsif (/<input\b[^>]*value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"'][^>]*name=["'"'"'"'"'"'"'"'"']mode["'"'"'"'"'"'"'"'"']/i) {
+        print $1;
+      }' "$1"
   }
 
   append_hidden_fields() {
@@ -457,7 +468,10 @@ run_install() {
   print_response_diagnostics "${body_file}" "Step 1 (GET)"
   previous_step_label=$(extract_step_label "${body_file}" || true)
   previous_step_label="${previous_step_label:-Unknown}"
+  previous_step_mode=$(extract_hidden_mode "${body_file}" || true)
+  previous_step_mode="${previous_step_mode:-Unknown}"
   log "Installer visible step: ${previous_step_label}"
+  log "Installer mode marker: ${previous_step_mode}"
 
   for step_index in $(seq 1 8); do
     form_action=$(extract_form_action "${body_file}" || true)
@@ -499,19 +513,23 @@ run_install() {
     print_response_diagnostics "${body_file}" "Step $((step_index + 1)) (POST)"
     current_step_label=$(extract_step_label "${body_file}" || true)
     current_step_label="${current_step_label:-Unknown}"
+    current_step_mode=$(extract_hidden_mode "${body_file}" || true)
+    current_step_mode="${current_step_mode:-Unknown}"
     log "Installer visible step after submit: ${current_step_label}"
+    log "Installer mode marker after submit: ${current_step_mode}"
 
     if grep -qi 'Invalid request' "${body_file}"; then
       err "Installer rejected step ${step_index} as Invalid request."
       return 1
     fi
-    if [ "${current_step_label}" = "${previous_step_label}" ]; then
-      err "Installer made no progress: still on step '${current_step_label}' after POST ${step_index}."
+    if [ "${current_step_label}" = "${previous_step_label}" ] && [ "${current_step_mode}" = "${previous_step_mode}" ]; then
+      err "Installer made no progress: still on step '${current_step_label}' (mode '${current_step_mode}') after POST ${step_index}."
       return 1
     fi
 
     current_url="${form_url}"
     previous_step_label="${current_step_label}"
+    previous_step_mode="${current_step_mode}"
   done
 }
 
