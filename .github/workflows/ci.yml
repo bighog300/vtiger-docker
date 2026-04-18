@@ -33,6 +33,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Regression check config template rendering
+        run: |
+          export DB_HOST=mysql
+          export DB_PORT=3306
+          export DB_NAME=vtiger
+          export DB_USER=vtiger
+          export DB_PASSWORD=vtigerpass
+          export VTIGER_SITE_URL=http://localhost:8080
+          export VTIGER_ADMIN_USER=admin
+          export VTIGER_ADMIN_PASSWORD='Admin@1234'
+          export VTIGER_ADMIN_EMAIL=admin@example.com
+          export VTIGER_TIMEZONE=UTC
+          export VTIGER_LANGUAGE=en_us
+          export VTIGER_CURRENCY=USD
+          export VTIGER_COMPANY_NAME=VEMS
+          CONFIG_ENVSUBST_VARS='${DB_HOST} ${DB_PORT} ${DB_NAME} ${DB_USER} ${DB_PASSWORD} ${VTIGER_SITE_URL} ${VTIGER_ADMIN_USER} ${VTIGER_ADMIN_PASSWORD} ${VTIGER_ADMIN_EMAIL} ${VTIGER_TIMEZONE} ${VTIGER_LANGUAGE} ${VTIGER_CURRENCY} ${VTIGER_COMPANY_NAME}'
+          tmp_config="$(mktemp)"
+          envsubst "${CONFIG_ENVSUBST_VARS}" < config/config.inc.php.tpl > "${tmp_config}"
+          php -l "${tmp_config}"
+          grep -q '\$dbconfig' "${tmp_config}"
+          grep -q '\$site_URL' "${tmp_config}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
