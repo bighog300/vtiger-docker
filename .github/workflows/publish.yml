@@ -12,11 +12,13 @@ permissions:
   packages: write
 
 env:
+  REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/vtigercrm
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +29,7 @@ jobs:
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -40,22 +42,49 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
-      - name: Run installer/build pipeline without push
-        env:
-          IMAGE: ${{ env.IMAGE_NAME }}
-          VERSION: 8.3.0
-        run: ./build.sh --no-push
-
-      - name: Tag release aliases
+      - name: Start MySQL
         run: |
-          docker image inspect "${IMAGE_NAME}:8.3.0" >/dev/null
-          for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n'); do
-            docker tag "${IMAGE_NAME}:8.3.0" "$tag"
+          docker compose -f docker-compose.build.yml up -d mysql
+          echo "Waiting for MySQL to be healthy..."
+          for i in $(seq 1 60); do
+            docker inspect vtiger-build-mysql --format='{{.State.Health.Status}}' 2>/dev/null | grep -q healthy && { echo "MySQL healthy."; break; }
+            [ "$i" = "60" ] && { echo "ERROR: MySQL never became healthy."; exit 1; }
+            sleep 3
           done
 
-      - name: Push tags
+      - name: Build and run installer
         run: |
-          for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n'); do
-            docker push "$tag"
-          done
+          docker compose -f docker-compose.build.yml build installer
+          if ! docker compose -f docker-compose.build.yml up --no-deps --exit-code-from installer installer; then
+            echo "Installer failed:"
+            docker logs vtiger-build-installer 2>&1 | tail -60
+            exit 1
+          fi
+          echo "Installer completed successfully."
+
+      - name: Export schema.sql
+        run: |
+          docker exec vtiger-build-mysql mysqldump \
+            -uroot -pbuildroot \
+            --no-tablespaces --single-transaction --routines --triggers \
+            vtiger > schema.sql
+          LINES=$(wc -l < schema.sql)
+          echo "schema.sql: ${LINES} lines"
+          test "${LINES}" -gt 100
+
+      - name: Tear down build stack
+        run: docker compose -f docker-compose.build.yml down -v
+
+      - name: Build and push runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
