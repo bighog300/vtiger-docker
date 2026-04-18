@@ -109,7 +109,68 @@ stop_apache() {
 
 run_install() {
   local internal_url="http://127.0.0.1:${INSTALL_PORT}"
-  local install_url="${internal_url}/index.php?module=Users&action=Install"
+  local install_url="${internal_url}/index.php?module=Install&view=Index"
+  local cookie_jar="/tmp/vtiger-install-cookies.txt"
+  local headers_file="/tmp/vtiger-install-headers.txt"
+  local body_file="/tmp/vtiger-install-body.html"
+  local form_action
+  local form_url
+  local post_args=()
+
+  extract_form_action() {
+    perl -0777 -ne 'if (/<form[^>]*action=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"'][^>]*>/is){print $1}' "$1"
+  }
+
+  append_hidden_fields() {
+    local html_file="$1"
+    while IFS='=' read -r name value; do
+      [ -z "${name}" ] && continue
+      post_args+=(--data-urlencode "${name}=${value}")
+    done < <(perl -0777 -ne '
+      while (/<input[^>]*type=["'"'"'"'"'"'"'"'"']hidden["'"'"'"'"'"'"'"'"'][^>]*>/ig) {
+        $tag = $&;
+        next unless $tag =~ /name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i;
+        $name = $1;
+        $value = "";
+        $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
+        print "$name=$value\n";
+      }' "${html_file}")
+  }
+
+  print_response_diagnostics() {
+    local html_file="$1"
+    local step_label="$2"
+    local title
+    local page_kind
+    local errors
+
+    title=$(sed -n 's:.*<title[^>]*>\(.*\)</title>.*:\1:Ip' "${html_file}" | head -1 | sed 's/[[:space:]]\+/ /g' || true)
+    [ -n "${title}" ] || title="(no <title> found)"
+
+    if grep -qiE 'installation completed|login|dashboard' "${html_file}"; then
+      page_kind="success/redirect target"
+    elif grep -qiE 'requirement|prerequisite|php configuration|permissions' "${html_file}"; then
+      page_kind="requirements/prerequisite page"
+    elif grep -qiE 'step[[:space:]]*[0-9]|installation wizard|install vtiger' "${html_file}"; then
+      page_kind="installer step page"
+    elif grep -qiE 'error|exception|fatal|warning' "${html_file}"; then
+      page_kind="error page"
+    else
+      page_kind="unclassified page"
+    fi
+
+    errors=$(grep -iE 'error|exception|fatal|warning|failed' "${html_file}" | head -10 | sed 's/<[^>]*>//g' || true)
+
+    log "${step_label} diagnostics:"
+    log "  Page title: ${title}"
+    log "  Page type: ${page_kind}"
+    if [ -n "${errors}" ]; then
+      log "  Error-like text (first lines):"
+      echo "${errors}" | sed 's/^/[vtiger-install]    /'
+    fi
+    log "  Body excerpt:"
+    sed -n '1,40p' "${html_file}" | sed 's/<[^>]*>//g' | sed '/^[[:space:]]*$/d' | head -12 | sed 's/^/[vtiger-install]    /' || true
+  }
 
   log "Waiting for Apache on ${internal_url}..."
   for i in $(seq 1 60); do
@@ -121,29 +182,55 @@ run_install() {
     sleep 2
   done
 
-  log "Submitting installer to ${install_url} (site_URL=${VTIGER_SITE_URL})..."
-  # Do not use -f or -L: vtiger redirects to VTIGER_SITE_URL on success, which may be
+  rm -f "${cookie_jar}" "${headers_file}" "${body_file}" /tmp/vtiger-install-response.html
+  log "Loading installer entry page: ${install_url}"
+  HTTP_CODE=$(curl -sS -D "${headers_file}" -c "${cookie_jar}" -b "${cookie_jar}" \
+    --max-time 120 -o "${body_file}" -w '%{http_code}' "${install_url}" 2>/dev/null || true)
+  cp "${body_file}" /tmp/vtiger-install-response.html
+  log "Installer entry HTTP response code: ${HTTP_CODE}"
+  print_response_diagnostics "${body_file}" "Step 1 (GET)"
+
+  form_action=$(extract_form_action "${body_file}" || true)
+  if [ -z "${form_action}" ]; then
+    err "Unable to find installer form action on entry page."
+    return 1
+  fi
+  form_url="${internal_url}/${form_action#/}"
+  log "Submitting installer form to ${form_url} (site_URL=${VTIGER_SITE_URL})..."
+
+  append_hidden_fields "${body_file}"
+  post_args+=(
+    --data-urlencode "module=Install"
+    --data-urlencode "view=Index"
+    --data-urlencode "mode=Step5"
+    --data-urlencode "accept_license=on"
+    --data-urlencode "dbname=${DB_NAME}"
+    --data-urlencode "dbusername=${DB_USER}"
+    --data-urlencode "dbpassword=${DB_PASSWORD}"
+    --data-urlencode "db_type=mysqli"
+    --data-urlencode "db_hostname=${DB_HOST}"
+    --data-urlencode "db_port=${DB_PORT}"
+    --data-urlencode "site_URL=${VTIGER_SITE_URL}"
+    --data-urlencode "admin_name=${VTIGER_ADMIN_USER}"
+    --data-urlencode "admin_password=${VTIGER_ADMIN_PASSWORD}"
+    --data-urlencode "confirm_admin_password=${VTIGER_ADMIN_PASSWORD}"
+    --data-urlencode "admin_email=${VTIGER_ADMIN_EMAIL}"
+    --data-urlencode "timezone=${VTIGER_TIMEZONE}"
+    --data-urlencode "default_language=${VTIGER_LANGUAGE}"
+    --data-urlencode "default_currency=${VTIGER_CURRENCY}"
+    --data-urlencode "company_name=${VTIGER_COMPANY_NAME}"
+  )
+
+  # Do not use -f or -L: vtiger may redirect to VTIGER_SITE_URL on success, which can be
   # unreachable from inside the installer container. Verify success via DB instead.
-  HTTP_CODE=$(curl -sS -o /tmp/vtiger-install-response.html -w '%{http_code}' \
-    --max-time 300 \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode "dbname=${DB_NAME}" \
-    --data-urlencode "dbusername=${DB_USER}" \
-    --data-urlencode "dbpassword=${DB_PASSWORD}" \
-    --data-urlencode "db_type=mysqli" \
-    --data-urlencode "db_hostname=${DB_HOST}" \
-    --data-urlencode "db_port=${DB_PORT}" \
-    --data-urlencode "site_URL=${VTIGER_SITE_URL}" \
-    --data-urlencode "admin_name=${VTIGER_ADMIN_USER}" \
-    --data-urlencode "admin_password=${VTIGER_ADMIN_PASSWORD}" \
-    --data-urlencode "confirm_admin_password=${VTIGER_ADMIN_PASSWORD}" \
-    --data-urlencode "admin_email=${VTIGER_ADMIN_EMAIL}" \
-    --data-urlencode "timezone=${VTIGER_TIMEZONE}" \
-    --data-urlencode "default_language=${VTIGER_LANGUAGE}" \
-    --data-urlencode "default_currency=${VTIGER_CURRENCY}" \
-    --data-urlencode "company_name=${VTIGER_COMPANY_NAME}" \
-    "${install_url}" 2>/dev/null || true)
-  log "Installer HTTP response code: ${HTTP_CODE}"
+  HTTP_CODE=$(curl -sS -D "${headers_file}" -c "${cookie_jar}" -b "${cookie_jar}" \
+    --max-time 300 -H 'Content-Type: application/x-www-form-urlencoded' \
+    -o "${body_file}" -w '%{http_code}' \
+    "${post_args[@]}" \
+    "${form_url}" 2>/dev/null || true)
+  cp "${body_file}" /tmp/vtiger-install-response.html
+  log "Installer submit HTTP response code: ${HTTP_CODE}"
+  print_response_diagnostics "${body_file}" "Step 2 (POST)"
 }
 
 verify_schema() {
