@@ -1,111 +1,147 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DB_HOST="${DB_HOST:-mysql}"; DB_PORT="${DB_PORT:-3306}"; DB_NAME="${DB_NAME:-vtiger}"
-DB_USER="${DB_USER:-vtiger}"; DB_PASSWORD="${DB_PASSWORD:-vtigerpass}"
-DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-buildroot}"
-ADMIN_PASS="${VTIGER_ADMIN_PASSWORD:-Admin@1234}"; ADMIN_EMAIL="${VTIGER_ADMIN_EMAIL:-admin@example.com}"
-TIMEZONE="${VTIGER_TIMEZONE:-UTC}"; CURRENCY="${VTIGER_CURRENCY:-USD}"; COMPANY="${VTIGER_COMPANY_NAME:-VEMS}"
-APP_ROOT="/app"; INSTALL_PORT=8181; COOKIE_JAR="/tmp/vtiger-install-cookies.txt"
-BASE_URL="http://127.0.0.1:${INSTALL_PORT}"
 log() { echo "[vtiger-install] $*"; }
 err() { echo "[vtiger-install] ERROR: $*" >&2; }
 
-log "Rendering config.inc.php..."
-export DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
-export VTIGER_SITE_URL="${VTIGER_SITE_URL:-http://localhost}" VTIGER_TIMEZONE="${TIMEZONE}"
-export VTIGER_LANGUAGE="${VTIGER_LANGUAGE:-en_us}" VTIGER_CURRENCY="${CURRENCY}"
-export VTIGER_COMPANY_NAME="${COMPANY}" VTIGER_ADMIN_EMAIL="${ADMIN_EMAIL}"
-export VTIGER_ADMIN_USER="${VTIGER_ADMIN_USER:-admin}" VTIGER_ADMIN_PASSWORD="${ADMIN_PASS}"
-envsubst < /build/config.inc.php.tpl > "${APP_ROOT}/config.inc.php"
-chown www-data:www-data "${APP_ROOT}/config.inc.php"
+APP_ROOT="${APP_ROOT:-/app}"
+CONFIG_TEMPLATE="${CONFIG_TEMPLATE:-/build/config.inc.php.tpl}"
+CONFIG_FILE="${APP_ROOT}/config.inc.php"
+INSTALL_PORT="${INSTALL_PORT:-8181}"
 
-log "Waiting for MySQL root ping..."
-for i in $(seq 1 90); do
-  mysqladmin ping -h"${DB_HOST}" -P"${DB_PORT}" -uroot -p"${DB_ROOT_PASSWORD}" --silent 2>/dev/null && { log "MySQL ready (attempt ${i})."; break; }
-  log "Attempt ${i}/90 — retrying in 3s..."
-  [ "$i" = "90" ] && { err "MySQL not ready after 90 attempts."; exit 1; }
-  sleep 3
-done
+DB_HOST="${DB_HOST:-mysql}"
+DB_PORT="${DB_PORT:-3306}"
+DB_NAME="${DB_NAME:-vtiger}"
+DB_USER="${DB_USER:-vtiger}"
+DB_PASSWORD="${DB_PASSWORD:-vtigerpass}"
+DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-root}"
 
-log "Waiting for app user grants..."
-for i in $(seq 1 30); do
-  mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1;" "${DB_NAME}" >/dev/null 2>&1 && { log "App user ready."; break; }
-  [ "$i" = "30" ] && { err "App user not accessible."; exit 1; }
-  sleep 2
-done
+VTIGER_SITE_URL="${VTIGER_SITE_URL:-http://localhost:${INSTALL_PORT}}"
+VTIGER_ADMIN_USER="${VTIGER_ADMIN_USER:-admin}"
+VTIGER_ADMIN_PASSWORD="${VTIGER_ADMIN_PASSWORD:-Admin@1234}"
+VTIGER_ADMIN_EMAIL="${VTIGER_ADMIN_EMAIL:-admin@example.com}"
+VTIGER_TIMEZONE="${VTIGER_TIMEZONE:-UTC}"
+VTIGER_LANGUAGE="${VTIGER_LANGUAGE:-en_us}"
+VTIGER_CURRENCY="${VTIGER_CURRENCY:-USD}"
+VTIGER_COMPANY_NAME="${VTIGER_COMPANY_NAME:-VEMS}"
 
-log "Starting Apache on port ${INSTALL_PORT}..."
-a2enmod rewrite php8.2 2>/dev/null || true
-printf "ServerName localhost\nListen 127.0.0.1:%s\nDocumentRoot %s\n<Directory %s>\n    AllowOverride All\n    Require all granted\n    DirectoryIndex index.php\n</Directory>\n<FilesMatch \"\\.php\$\">\n    SetHandler application/x-httpd-php\n</FilesMatch>\nErrorLog /tmp/install-apache-error.log\nCustomLog /tmp/install-apache-access.log combined\n" \
-  "${INSTALL_PORT}" "${APP_ROOT}" "${APP_ROOT}" > /tmp/install-apache.conf
+wait_for_mysql() {
+  log "Waiting for MySQL root ping..."
+  for i in $(seq 1 90); do
+    if mysqladmin ping -h"${DB_HOST}" -P"${DB_PORT}" -uroot -p"${DB_ROOT_PASSWORD}" --silent >/dev/null 2>&1; then
+      log "MySQL ready (attempt ${i})."
+      return 0
+    fi
+    log "Attempt ${i}/90 — retrying in 3s..."
+    sleep 3
+  done
+  err "MySQL never became ready."
+  return 1
+}
 
-apache2 -f /tmp/install-apache.conf -k start 2>/tmp/install-apache-start.log || {
-  err "Apache failed: $(cat /tmp/install-apache-start.log)"; exit 1; }
+wait_for_app_user() {
+  log "Waiting for app user grants..."
+  for i in $(seq 1 60); do
+    if mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" -e "USE \`${DB_NAME}\`;" >/dev/null 2>&1; then
+      log "App user ready."
+      return 0
+    fi
+    sleep 2
+  done
+  err "App user credentials/grants not ready."
+  return 1
+}
 
-log "Waiting for Apache..."
-for i in $(seq 1 30); do
-  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/index.php" 2>/dev/null || echo 0)
-  [ "${STATUS}" != "0" ] && [ "${STATUS}" != "000" ] && { log "Apache ready HTTP ${STATUS}."; break; }
-  [ "$i" = "30" ] && { err "Apache not ready."; cat /tmp/install-apache-error.log; exit 1; }
-  sleep 2
-done
-rm -f "${COOKIE_JAR}"
+render_config() {
+  log "Rendering config.inc.php..."
+  export DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
+  export VTIGER_SITE_URL VTIGER_ADMIN_USER VTIGER_ADMIN_PASSWORD VTIGER_ADMIN_EMAIL
+  export VTIGER_TIMEZONE VTIGER_LANGUAGE VTIGER_CURRENCY VTIGER_COMPANY_NAME
 
-case "${CURRENCY}" in USD) CN="USA, Dollars";; EUR) CN="Euro Member Countries, Euro";;
-  GBP) CN="United Kingdom, Pounds";; AUD) CN="Australia, Dollars";;
-  CAD) CN="Canada, Dollars";; *) CN="USA, Dollars";; esac
+  mkdir -p "$(dirname "${CONFIG_FILE}")"
+  envsubst < "${CONFIG_TEMPLATE}" > "${CONFIG_FILE}"
+}
 
-log "Step5: posting DB and admin config..."
-STEP5=$(curl -sf -c "${COOKIE_JAR}" -b "${COOKIE_JAR}" --max-time 120 \
-  -d "module=Install&view=Index&mode=Step5&db_type=mysqli" \
-  --data-urlencode "db_hostname=${DB_HOST}:${DB_PORT}" \
-  --data-urlencode "db_username=${DB_USER}" --data-urlencode "db_password=${DB_PASSWORD}" \
-  --data-urlencode "db_name=${DB_NAME}" -d "create_db=" \
-  --data-urlencode "currency_name=${CN}" \
-  --data-urlencode "password=${ADMIN_PASS}" --data-urlencode "retype_password=${ADMIN_PASS}" \
-  --data-urlencode "admin_email=${ADMIN_EMAIL}" -d "firstname=VEMS&lastname=Admin" \
-  --data-urlencode "timezone=${TIMEZONE}" -d "dateformat=yyyy-mm-dd&default_language=en_us" \
-  "${BASE_URL}/index.php" || true)
-log "Step5 posted (${#STEP5} bytes)."
+start_apache() {
+  log "Starting Apache on port ${INSTALL_PORT}..."
 
-log "Step6: posting confirmation..."
-STEP6=$(curl -sf -c "${COOKIE_JAR}" -b "${COOKIE_JAR}" --max-time 60 \
-  -d "module=Install&view=Index&mode=Step6" "${BASE_URL}/index.php" || true)
-log "Step6 posted (${#STEP6} bytes)."
+  a2enmod rewrite >/dev/null 2>&1 || true
+  a2dissite 000-default >/dev/null 2>&1 || true
 
-AUTH_KEY=""
-for BODY in "${STEP5}" "${STEP6}"; do
-  AK=$(echo "${BODY}" | grep -oP 'name="auth_key"\s+value="\K[^"]+' | head -1 || true)
-  [ -n "${AK}" ] && { AUTH_KEY="${AK}"; break; }
-done
-if [ -z "${AUTH_KEY}" ]; then
-  err "Could not extract auth_key."
-  err "Step5: ${STEP5:0:800}"
-  err "Step6: ${STEP6:0:800}"
-  apache2 -f /tmp/install-apache.conf -k stop 2>/dev/null
-  exit 1
-fi
-log "auth_key: ${AUTH_KEY}"
+  cat > /etc/apache2/ports.conf <<EOF
+Listen 127.0.0.1:${INSTALL_PORT}
+EOF
 
-log "Step7: triggering schema creation (1-3 minutes)..."
-STEP7=$(curl -sf -c "${COOKIE_JAR}" -b "${COOKIE_JAR}" --max-time 600 \
-  -d "module=Install&view=Index&mode=Step7" \
-  --data-urlencode "auth_key=${AUTH_KEY}" \
-  --data-urlencode "myname=${COMPANY}" --data-urlencode "myemail=${ADMIN_EMAIL}" \
-  -d "industry=Technology" "${BASE_URL}/index.php" || true)
-log "Step7 complete (${#STEP7} bytes)."
+  cat > /etc/apache2/sites-available/vtiger-install.conf <<EOF
+<VirtualHost 127.0.0.1:${INSTALL_PORT}>
+    ServerName localhost
+    DocumentRoot ${APP_ROOT}
 
-apache2 -f /tmp/install-apache.conf -k stop 2>/dev/null || true
-log "Install Apache stopped."
+    <Directory ${APP_ROOT}>
+        AllowOverride All
+        Require all granted
+        DirectoryIndex index.php
+    </Directory>
 
-TC=$(mysql -N -s -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" \
-  -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}'
-      AND table_name IN ('vtiger_users','vtiger_tab','vtiger_version');" 2>/dev/null || echo 0)
+    ErrorLog /tmp/install-apache-error.log
+    CustomLog /tmp/install-apache-access.log combined
+</VirtualHost>
+EOF
 
-if [ "${TC}" -lt 2 ]; then
-  err "Schema verification failed — ${TC} core table(s) found."
-  err "Step7: ${STEP7:0:1000}"
-  exit 1
-fi
-log "Schema verified: ${TC} core tables. Install complete."
+  a2ensite vtiger-install >/dev/null 2>&1 || true
+
+  apache2ctl -k start 2>/tmp/install-apache-start.log || {
+    err "Apache failed: $(cat /tmp/install-apache-start.log)"
+    exit 1
+  }
+}
+
+stop_apache() {
+  apache2ctl -k stop >/dev/null 2>&1 || true
+}
+
+run_install() {
+  local install_url="${VTIGER_SITE_URL%/}/index.php?module=Users&action=Install"
+
+  log "Waiting for Apache HTTP endpoint..."
+  for i in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${INSTALL_PORT}/" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+
+  log "Submitting installer request..."
+  curl -fsS -L "${install_url}" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode "dbname=${DB_NAME}" \
+    --data-urlencode "dbusername=${DB_USER}" \
+    --data-urlencode "dbpassword=${DB_PASSWORD}" \
+    --data-urlencode "db_type=mysqli" \
+    --data-urlencode "db_hostname=${DB_HOST}" \
+    --data-urlencode "db_port=${DB_PORT}" \
+    --data-urlencode "site_URL=${VTIGER_SITE_URL}" \
+    --data-urlencode "admin_name=${VTIGER_ADMIN_USER}" \
+    --data-urlencode "admin_password=${VTIGER_ADMIN_PASSWORD}" \
+    --data-urlencode "confirm_admin_password=${VTIGER_ADMIN_PASSWORD}" \
+    --data-urlencode "admin_email=${VTIGER_ADMIN_EMAIL}" \
+    --data-urlencode "timezone=${VTIGER_TIMEZONE}" \
+    --data-urlencode "default_language=${VTIGER_LANGUAGE}" \
+    --data-urlencode "default_currency=${VTIGER_CURRENCY}" \
+    --data-urlencode "company_name=${VTIGER_COMPANY_NAME}" \
+    >/tmp/vtiger-install-response.html
+}
+
+main() {
+  render_config
+  wait_for_mysql
+  wait_for_app_user
+  start_apache
+
+  trap 'stop_apache' EXIT
+
+  run_install
+  log "Installer request completed."
+}
+
+main "$@"
