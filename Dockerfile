@@ -1,8 +1,3 @@
-# ============================================================
-# Stage 1: builder
-# Clones vtiger source, compiles all PHP extensions including
-# IMAP (from bundled c-client source), runs headless installer.
-# ============================================================
 FROM php:8.2-apache AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxml2-dev \
         libzip-dev \
         libkrb5-dev \
+        libc-client-dev \
         libssl-dev \
         zlib1g-dev \
         libonig-dev \
@@ -29,72 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xml \
         mbstring \
         soap \
-    && docker-php-source extract \
-    && cd /usr/src/php/ext/imap \
-    && phpize \
-    && ./configure --with-imap-ssl --with-kerberos \
-    && make -j$(nproc) \
-    && make install \
-    && docker-php-ext-enable imap \
-    && docker-php-source delete \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-
-WORKDIR /app
-RUN git clone --depth=1 https://github.com/bighog300/vtigercrm.git .
-
-COPY init-scripts/install.sh        /build/install.sh
-COPY init-scripts/export-schema.sh  /build/export-schema.sh
-COPY config/config.inc.php.tpl      /build/config.inc.php.tpl
-RUN chmod +x /build/install.sh /build/export-schema.sh
-
-# ============================================================
-# Stage 2: runtime
-# Copies compiled app + extensions from builder.
-# schema.sql is added by build.sh after installer runs.
-# ============================================================
-FROM php:8.2-apache AS runtime
-
-LABEL org.opencontainers.image.source="https://github.com/bighog300/vtiger-docker"
-LABEL org.opencontainers.image.description="vtiger CRM 8.3.0"
-LABEL org.opencontainers.image.licenses="VPL-1.1"
-
-# Runtime libs only — no build headers
-# libzip4t64 is the Bookworm name (was libzip4 in Bullseye)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        default-mysql-client \
-        libpng16-16 \
-        libjpeg62-turbo \
-        libfreetype6 \
-        libxml2 \
-        libzip-dev \
-        libkrb5-3 \
-        curl \
-        rsync \
-        gettext-base \
-    && a2enmod rewrite \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Copy compiled PHP extensions from builder
-COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
-COPY --from=builder /usr/local/etc/php/conf.d/     /usr/local/etc/php/conf.d/
-
-# Copy installed app
-COPY --from=builder /app /var/www/html
-
-# Runtime scripts and config template
-COPY init-scripts/entrypoint.sh  /opt/vtiger/entrypoint.sh
-COPY config/config.inc.php.tpl   /opt/vtiger/config.inc.php.tpl
-RUN chmod +x /opt/vtiger/entrypoint.sh
-
-# schema.sql is injected by build.sh before this stage runs
-# If missing the build will fail clearly here rather than at runtime
-COPY schema.sql /opt/vtiger/schema.sql
-
-RUN chown -R www-data:www-data /var/www/html \
-    && find /var/www/html -type d -exec chmod 755 {} \; \
-    && find /var/www/html -type f -exec chmod 644 {} \;
-
-EXPOSE 80
-ENTRYPOINT ["/opt/vtiger/entrypoint.sh"]
+    && docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
+    && docker-php-ext-install -j$(nproc) imap \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
