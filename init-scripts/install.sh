@@ -154,6 +154,25 @@ run_install() {
       }' "$1"
   }
 
+  extract_form_action_for_mode() {
+    local html_file="$1"
+    local mode_value="$2"
+    perl -0777 -ne '
+      my ($html, $mode) = @ARGV;
+      while ($html =~ m{(<form\b[^>]*>.*?</form>)}sig) {
+        my $form = $1;
+        next unless $form =~ /name=["'"'"']mode["'"'"'][^>]*value=["'"'"']\Q$mode\E["'"'"']/i
+          || $form =~ /value=["'"'"']\Q$mode\E["'"'"'][^>]*name=["'"'"']mode["'"'"']/i;
+        if ($form =~ /<form[^>]*action=["'"'"']([^"'"'"']+)["'"'"'][^>]*>/i) {
+          my $action = $1;
+          $action =~ s/&amp;/&/g;
+          print $action;
+          last;
+        }
+      }
+    ' "${html_file}" "${mode_value}"
+  }
+
   extract_step_label() {
     local html_file="$1"
     perl -0777 -ne '
@@ -232,6 +251,31 @@ run_install() {
         $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
         print "$name=$value\n";
       }' "${html_file}")
+  }
+
+  append_hidden_fields_for_mode() {
+    local html_file="$1"
+    local mode_value="$2"
+    while IFS='=' read -r name value; do
+      [ -z "${name}" ] && continue
+      post_args+=(--data-urlencode "${name}=${value}")
+    done < <(perl -0777 -ne '
+      my ($html, $mode) = @ARGV;
+      while ($html =~ m{(<form\b[^>]*>.*?</form>)}sig) {
+        my $form = $1;
+        next unless $form =~ /name=["'"'"']mode["'"'"'][^>]*value=["'"'"']\Q$mode\E["'"'"']/i
+          || $form =~ /value=["'"'"']\Q$mode\E["'"'"'][^>]*name=["'"'"']mode["'"'"']/i;
+        while ($form =~ /<input[^>]*type=["'"'"']hidden["'"'"'][^>]*>/ig) {
+          my $tag = $&;
+          next unless $tag =~ /name=["'"'"']([^"'"'"']+)["'"'"']/i;
+          my $name = $1;
+          my $value = "";
+          $value = $1 if $tag =~ /value=["'"'"']([^"'"'"']*)["'"'"']/i;
+          print "$name=$value\n";
+        }
+        last;
+      }
+    ' "${html_file}" "${mode_value}")
   }
 
   append_checkbox_fields() {
@@ -375,6 +419,95 @@ run_install() {
     fi
   }
 
+  append_step2_controls() {
+    local html_file="$1"
+    while IFS='=' read -r name value; do
+      [ -z "${name}" ] && continue
+      post_args+=(--data-urlencode "${name}=${value}")
+    done < <(perl -0777 -ne '
+      my $html = $_;
+      while ($html =~ m{(<form\b[^>]*>.*?</form>)}sig) {
+        my $form = $1;
+        next unless $form =~ /name=["'"'"']mode["'"'"'][^>]*value=["'"'"']Step2["'"'"']/i
+          || $form =~ /value=["'"'"']Step2["'"'"'][^>]*name=["'"'"']mode["'"'"']/i;
+
+        while ($form =~ /<input\b[^>]*type=["'"'"']checkbox["'"'"'][^>]*>/ig) {
+          my $tag = $&;
+          next unless $tag =~ /name=["'"'"']([^"'"'"']+)["'"'"']/i;
+          my $name = $1;
+          next unless $name =~ /(accept|agree|license|terms)/i || $tag =~ /(accept|agree|license|terms)/i;
+          my $value = "on";
+          $value = $1 if $tag =~ /value=["'"'"']([^"'"'"']*)["'"'"']/i;
+          print "$name=$value\n";
+          last;
+        }
+
+        my @candidates = ();
+        while ($form =~ /<input\b[^>]*type=["'"'"']submit["'"'"'][^>]*>/ig) {
+          my $tag = $&;
+          next unless $tag =~ /name=["'"'"']([^"'"'"']+)["'"'"']/i;
+          my $name = $1;
+          my $value = "";
+          $value = $1 if $tag =~ /value=["'"'"']([^"'"'"']*)["'"'"']/i;
+          push @candidates, "$name=$value";
+        }
+        while ($form =~ /<button\b[^>]*type=["'"'"']submit["'"'"'][^>]*>(.*?)<\/button>/ig) {
+          my $tag = $&;
+          my $text = $1 // "";
+          next unless $tag =~ /name=["'"'"']([^"'"'"']+)["'"'"']/i;
+          my $name = $1;
+          my $value = "";
+          $value = $1 if $tag =~ /value=["'"'"']([^"'"'"']*)["'"'"']/i;
+          $text =~ s/<[^>]+>/ /g;
+          $text =~ s/\s+/ /g;
+          $text =~ s/^\s+|\s+$//g;
+          $value = $text if $value eq "";
+          push @candidates, "$name=$value|$text";
+        }
+        my $best = "";
+        for my $c (@candidates) {
+          my $probe = $c;
+          if ($probe =~ /(next|continue|agree|install|start|proceed)/i) {
+            ($best = $c) =~ s/\|.*$//;
+            last;
+          }
+          $best = $c unless $best;
+        }
+        if ($best) {
+          $best =~ s/\|.*$//;
+          print "$best\n";
+        }
+        last;
+      }
+    ' "${html_file}")
+  }
+
+  log_payload_field_names() {
+    local label="$1"
+    local pair
+    local names=()
+    local value
+    for ((i=0; i<${#post_args[@]}; i++)); do
+      if [ "${post_args[$i]}" = "--data-urlencode" ] && [ $((i+1)) -lt ${#post_args[@]} ]; then
+        pair="${post_args[$((i+1))]}"
+        names+=("${pair%%=*}")
+      fi
+    done
+    if [ ${#names[@]} -eq 0 ]; then
+      log "${label} payload fields: (none)"
+      return
+    fi
+    log "${label} payload fields (${#names[@]}):"
+    for name in "${names[@]}"; do
+      if [[ "${name}" =~ (pass|password|token|secret|key|csrf) ]]; then
+        value="<masked>"
+      else
+        value="<set>"
+      fi
+      log "  - ${name}=${value}"
+    done
+  }
+
   append_step_specific_fields() {
     local step_label="$1"
 
@@ -474,7 +607,11 @@ run_install() {
   log "Installer mode marker: ${previous_step_mode}"
 
   for step_index in $(seq 1 8); do
-    form_action=$(extract_form_action "${body_file}" || true)
+    form_action=""
+    if [ "${previous_step_mode}" = "Step2" ]; then
+      form_action=$(extract_form_action_for_mode "${body_file}" "Step2" || true)
+    fi
+    [ -n "${form_action}" ] || form_action=$(extract_form_action "${body_file}" || true)
     if [ -z "${form_action}" ]; then
       log "No installer form action found after step ${step_index}; assuming wizard finished or redirected."
       break
@@ -488,16 +625,26 @@ run_install() {
     log "Submitting installer step ${step_index} to ${form_url} (site_URL=${VTIGER_SITE_URL})..."
 
     post_args=()
-    append_hidden_fields "${body_file}"
-    append_csrf_field "${body_file}"
-    append_checkbox_fields "${body_file}"
-    append_radio_fields "${body_file}"
-    append_select_fields "${body_file}"
-    append_visible_text_fields "${body_file}"
-    append_next_submit_field "${body_file}"
-    add_or_replace_field "module" "Install"
-    add_or_replace_field "view" "Index"
-    append_step_specific_fields "${previous_step_label}"
+    if [ "${previous_step_mode}" = "Step2" ]; then
+      append_hidden_fields_for_mode "${body_file}" "Step2"
+      append_csrf_field "${body_file}"
+      append_step2_controls "${body_file}"
+      add_or_replace_field "module" "Install"
+      add_or_replace_field "view" "Index"
+      log_payload_field_names "Step2"
+    else
+      append_hidden_fields "${body_file}"
+      append_csrf_field "${body_file}"
+      append_checkbox_fields "${body_file}"
+      append_radio_fields "${body_file}"
+      append_select_fields "${body_file}"
+      append_visible_text_fields "${body_file}"
+      append_next_submit_field "${body_file}"
+      add_or_replace_field "module" "Install"
+      add_or_replace_field "view" "Index"
+      append_step_specific_fields "${previous_step_label}"
+      log_payload_field_names "Step ${step_index}"
+    fi
 
     # Do not use -f or -L: vtiger may redirect to VTIGER_SITE_URL on success, which can be
     # unreachable from inside the installer container. Verify success via DB instead.
