@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+      - name: Actionlint
+        uses: raven-actions/actionlint@v2
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build installer
+        run: docker compose -f docker-compose.build.yml build installer
+
+      - name: Run installer
+        run: docker compose -f docker-compose.build.yml up --abort-on-container-exit installer
+
+      - name: Verify schema.sql
+        run: |
+          test -s schema.sql
+          test "$(wc -l < schema.sql)" -gt 100
+
+      - name: Build runtime image
+        run: docker build --target runtime -t vtigercrm-ci:${{ github.sha }} .
+
+      - name: Start runtime stack
+        env:
+          DB_ROOT_PASSWORD: root
+          DB_NAME: vtiger
+          DB_USER: vtiger
+          DB_PASSWORD: vtigerpass
+        run: |
+          docker network create vtiger-ci || true
+          docker run -d --name vtiger-ci-mysql --network vtiger-ci \
+            -e MYSQL_ROOT_PASSWORD=$DB_ROOT_PASSWORD \
+            -e MYSQL_DATABASE=$DB_NAME \
+            -e MYSQL_USER=$DB_USER \
+            -e MYSQL_PASSWORD=$DB_PASSWORD \
+            mysql:8.0
+          for i in $(seq 1 60); do
+            docker exec vtiger-ci-mysql mysqladmin ping -h localhost -uroot -p$DB_ROOT_PASSWORD --silent && break
+            sleep 3
+          done
+          docker run -d --name vtiger-ci-app --network vtiger-ci -p 8080:80 \
+            -e DB_HOST=vtiger-ci-mysql \
+            -e DB_PORT=3306 \
+            -e DB_NAME=$DB_NAME \
+            -e DB_USER=$DB_USER \
+            -e DB_PASSWORD=$DB_PASSWORD \
+            -e DB_ROOT_PASSWORD=$DB_ROOT_PASSWORD \
+            -e VTIGER_SITE_URL=http://localhost:8080 \
+            vtigercrm-ci:${{ github.sha }}
+
+      - name: Smoke check HTTP
+        run: |
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080 || true)"
+            if [ "$code" != "000" ] && [ -n "$code" ]; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "App never responded on 8080"
+          docker logs vtiger-ci-app || true
+          exit 1
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs
+          retention-days: 7
+          path: |
+            schema.sql
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker logs vtiger-ci-app || true
+          docker logs vtiger-ci-mysql || true
+          docker rm -f vtiger-ci-app vtiger-ci-mysql || true
+          docker network rm vtiger-ci || true
+          docker compose -f docker-compose.build.yml down -v || true
