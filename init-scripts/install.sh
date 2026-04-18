@@ -101,11 +101,12 @@ stop_apache() {
 }
 
 run_install() {
-  local install_url="${VTIGER_SITE_URL%/}/index.php?module=Users&action=Install"
+  local internal_url="http://127.0.0.1:${INSTALL_PORT}"
+  local install_url="${internal_url}/index.php?module=Users&action=Install"
 
   log "Waiting for Apache HTTP endpoint..."
   for i in $(seq 1 60); do
-    if curl -fsS "http://127.0.0.1:${INSTALL_PORT}/" >/dev/null 2>&1; then
+    if curl -fsS "${internal_url}/" >/dev/null 2>&1; then
       break
     fi
     sleep 2
