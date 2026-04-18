@@ -39,8 +39,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Pull vtiger source from GitHub
 WORKDIR /app
-RUN git clone --depth=1 https://github.com/bighog300/vtigercrm.git . \
-    && composer install --no-dev --optimize-autoloader --no-interaction
+RUN git clone --depth=1 https://github.com/bighog300/vtigercrm.git .
 
 # Copy build-time scripts
 COPY init-scripts/install.sh        /build/install.sh
