@@ -6,6 +6,9 @@
 FROM php:8.2-apache AS builder
 
 # System deps
+# Notes:
+#   - uw-imap-dev replaces libc-client-dev (removed in Debian Bookworm)
+#   - curl is NOT a php extension — installed via apt only
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         unzip \
@@ -16,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfreetype6-dev \
         libxml2-dev \
         libzip-dev \
-        libc-client-dev \
+        uw-imap-dev \
         libkrb5-dev \
         libssl-dev \
         zlib1g-dev \
@@ -27,7 +30,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pdo_mysql \
         gd \
         imap \
-        curl \
         zip \
         xml \
         mbstring \
@@ -58,7 +60,8 @@ LABEL org.opencontainers.image.source="https://github.com/bighog300/vtigercrm"
 LABEL org.opencontainers.image.description="vtiger CRM 8.3.0"
 LABEL org.opencontainers.image.licenses="VPL-1.1"
 
-# Runtime system deps (no build tools)
+# Runtime system deps only — no build headers needed
+# PHP extensions are copied from builder via COPY --from
 RUN apt-get update && apt-get install -y --no-install-recommends \
         default-mysql-client \
         libpng16-16 \
@@ -66,36 +69,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfreetype6 \
         libxml2 \
         libzip4 \
-        libc-client2007e \
         libkrb5-3 \
+        libc-client2007e \
         curl \
         rsync \
         gettext-base \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
-    && docker-php-ext-install -j$(nproc) \
-        mysqli \
-        pdo_mysql \
-        gd \
-        imap \
-        curl \
-        zip \
-        xml \
-        mbstring \
-        soap \
     && a2enmod rewrite \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy PHP extensions compiled in builder stage
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=builder /usr/local/etc/php/conf.d/     /usr/local/etc/php/conf.d/
 
 # Copy installed app from builder
 COPY --from=builder /app /var/www/html
 
 # Copy runtime scripts and config template
-COPY init-scripts/entrypoint.sh        /opt/vtiger/entrypoint.sh
-COPY config/config.inc.php.tpl         /opt/vtiger/config.inc.php.tpl
+COPY init-scripts/entrypoint.sh   /opt/vtiger/entrypoint.sh
+COPY config/config.inc.php.tpl    /opt/vtiger/config.inc.php.tpl
 RUN chmod +x /opt/vtiger/entrypoint.sh
 
-# schema.sql is copied in by build.sh after the install stage runs
-# It is baked into the final image so runtime import takes ~5 seconds
+# schema.sql is baked in at build time by build.sh — runtime import takes ~5s
 COPY schema.sql /opt/vtiger/schema.sql
 
 # Permissions
