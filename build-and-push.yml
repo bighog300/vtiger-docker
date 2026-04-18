@@ -1,0 +1,105 @@
+name: Build and Push vtiger Docker Image
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'       # triggers on v8.3.0, v8.4.0 etc.
+  workflow_dispatch:   # allows manual trigger from Actions tab
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/vtigercrm
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: buildroot
+          MYSQL_DATABASE: vtiger
+          MYSQL_USER: vtiger
+          MYSQL_PASSWORD: vtigerpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pbuildroot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: meta
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
+
+      - name: Build builder stage
+        run: |
+          docker build --target builder -t vtiger-builder:latest .
+
+      - name: Run headless installer
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: vtiger
+          DB_USER: vtiger
+          DB_PASSWORD: vtigerpass
+          DB_ROOT_PASSWORD: buildroot
+          VTIGER_SITE_URL: http://localhost
+          VTIGER_ADMIN_USER: admin
+          VTIGER_ADMIN_PASSWORD: Admin@1234
+          VTIGER_ADMIN_EMAIL: admin@example.com
+          VTIGER_TIMEZONE: UTC
+          VTIGER_LANGUAGE: en_us
+          VTIGER_CURRENCY: USD
+          VTIGER_COMPANY_NAME: VEMS
+        run: |
+          docker run --rm \
+            --network host \
+            -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD \
+            -e VTIGER_SITE_URL -e VTIGER_ADMIN_USER -e VTIGER_ADMIN_PASSWORD \
+            -e VTIGER_ADMIN_EMAIL -e VTIGER_TIMEZONE -e VTIGER_LANGUAGE \
+            -e VTIGER_CURRENCY -e VTIGER_COMPANY_NAME \
+            -v ${{ github.workspace }}/schema.sql:/output/schema.sql \
+            --entrypoint /build/install.sh \
+            vtiger-builder:latest
+
+      - name: Export schema
+        run: |
+          mysqldump \
+            -h 127.0.0.1 -P 3306 \
+            -uroot -pbuildroot \
+            --no-tablespaces --single-transaction --routines --triggers \
+            vtiger > schema.sql
+          echo "Schema lines: $(wc -l < schema.sql)"
+
+      - name: Build final runtime image
+        run: |
+          docker build \
+            --target runtime \
+            -t ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }} \
+            -t ${{ steps.meta.outputs.image }}:latest \
+            .
+
+      - name: Push to ghcr.io
+        run: |
+          docker push ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+          docker push ${{ steps.meta.outputs.image }}:latest

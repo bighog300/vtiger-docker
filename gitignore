@@ -1,0 +1,9 @@
+# Generated at build time — not committed
+schema.sql
+
+# Local env overrides
+.env
+.env.local
+
+# Docker build artifacts
+*.log

@@ -1,0 +1,59 @@
+version: "3.9"
+
+# Build pipeline — NOT for production use.
+# Brings up MySQL alongside the vtiger builder so the headless
+# installer can run against a real database, then exports the schema.
+#
+# Usage: ./build.sh  (do not run docker compose up directly)
+
+services:
+
+  mysql:
+    image: mysql:8.0
+    container_name: vtiger-build-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: buildroot
+      MYSQL_DATABASE:      vtiger
+      MYSQL_USER:          vtiger
+      MYSQL_PASSWORD:      vtigerpass
+    ports:
+      - "3307:3306"   # 3307 to avoid clashing with any running MySQL
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pbuildroot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - vtiger-build-db:/var/lib/mysql
+
+  installer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder        # only build the builder stage
+    container_name: vtiger-build-installer
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST:                mysql
+      DB_PORT:                3306
+      DB_NAME:                vtiger
+      DB_USER:                vtiger
+      DB_PASSWORD:            vtigerpass
+      DB_ROOT_PASSWORD:       buildroot
+      VTIGER_SITE_URL:        http://localhost
+      VTIGER_ADMIN_USER:      admin
+      VTIGER_ADMIN_PASSWORD:  Admin@1234
+      VTIGER_ADMIN_EMAIL:     admin@example.com
+      VTIGER_TIMEZONE:        UTC
+      VTIGER_LANGUAGE:        en_us
+      VTIGER_CURRENCY:        USD
+      VTIGER_COMPANY_NAME:    VEMS
+    volumes:
+      - ./schema.sql:/output/schema.sql   # installer writes schema dump here
+    entrypoint: ["/build/install.sh"]
+    restart: "no"
+
+volumes:
+  vtiger-build-db:
