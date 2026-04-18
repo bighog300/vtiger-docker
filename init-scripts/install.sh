@@ -626,12 +626,14 @@ run_install() {
 
     post_args=()
     if [ "${previous_step_mode}" = "Step2" ]; then
-      append_hidden_fields_for_mode "${body_file}" "Step2"
-      append_csrf_field "${body_file}"
-      append_step2_controls "${body_file}"
-      add_or_replace_field "module" "Install"
-      add_or_replace_field "view" "Index"
-      log_payload_field_names "Step2"
+      log "Step2 detected; using GET navigation submit (no POST replay)."
+      post_args=(
+        --get
+        --data-urlencode "module=Install"
+        --data-urlencode "view=Index"
+        --data-urlencode "mode=Step3"
+      )
+      log_payload_field_names "Step2 (GET request)"
     else
       append_hidden_fields "${body_file}"
       append_csrf_field "${body_file}"
