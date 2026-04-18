@@ -3,10 +3,16 @@ set -euo pipefail
 DB_HOST="${DB_HOST:-mysql}"; DB_PORT="${DB_PORT:-3306}"; DB_NAME="${DB_NAME:-vtiger}"
 DB_USER="${DB_USER:-vtiger}"; DB_PASSWORD="${DB_PASSWORD:-vtigerpass}"
 APP_ROOT="/var/www/html"; SCHEMA_FILE="/opt/vtiger/schema.sql"
+CONFIG_ENVSUBST_VARS='${DB_HOST} ${DB_PORT} ${DB_NAME} ${DB_USER} ${DB_PASSWORD} ${VTIGER_SITE_URL} ${VTIGER_TIMEZONE} ${VTIGER_LANGUAGE} ${VTIGER_CURRENCY} ${VTIGER_ADMIN_USER} ${VTIGER_ADMIN_EMAIL}'
 log() { echo "[vtiger-entrypoint] $*"; }
 
 log "Rendering config.inc.php..."
-envsubst < /opt/vtiger/config.inc.php.tpl > "${APP_ROOT}/config.inc.php"
+envsubst "${CONFIG_ENVSUBST_VARS}" < /opt/vtiger/config.inc.php.tpl > "${APP_ROOT}/config.inc.php"
+if ! php -l "${APP_ROOT}/config.inc.php" >/tmp/vtiger-entrypoint-config-lint.log 2>&1; then
+  log "ERROR: Rendered config.inc.php failed php -l validation."
+  cat /tmp/vtiger-entrypoint-config-lint.log >&2 || true
+  exit 1
+fi
 chown www-data:www-data "${APP_ROOT}/config.inc.php"
 
 log "Waiting for MySQL..."
