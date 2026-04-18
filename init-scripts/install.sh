@@ -5,7 +5,6 @@ log() { echo "[vtiger-install] $*"; }
 err() { echo "[vtiger-install] ERROR: $*" >&2; }
 
 APP_ROOT="${APP_ROOT:-/app}"
-CONFIG_TEMPLATE="${CONFIG_TEMPLATE:-/build/config.inc.php.tpl}"
 CONFIG_FILE="${APP_ROOT}/config.inc.php"
 INSTALL_PORT="${INSTALL_PORT:-8181}"
 
@@ -53,20 +52,24 @@ wait_for_app_user() {
   return 1
 }
 
-render_config() {
-  log "Rendering config.inc.php..."
-  export DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
-  export VTIGER_SITE_URL VTIGER_ADMIN_USER VTIGER_ADMIN_PASSWORD VTIGER_ADMIN_EMAIL
-  export VTIGER_TIMEZONE VTIGER_LANGUAGE VTIGER_CURRENCY VTIGER_COMPANY_NAME
-  local config_envsubst_vars='${DB_HOST} ${DB_PORT} ${DB_NAME} ${DB_USER} ${DB_PASSWORD} ${VTIGER_SITE_URL} ${VTIGER_ADMIN_USER} ${VTIGER_ADMIN_PASSWORD} ${VTIGER_ADMIN_EMAIL} ${VTIGER_TIMEZONE} ${VTIGER_LANGUAGE} ${VTIGER_CURRENCY} ${VTIGER_COMPANY_NAME}'
+prepare_install_state() {
+  log "Preparing clean installer state (no pre-rendered app config)..."
+  rm -f "${CONFIG_FILE}"
 
-  mkdir -p "$(dirname "${CONFIG_FILE}")"
-  envsubst "${config_envsubst_vars}" < "${CONFIG_TEMPLATE}" > "${CONFIG_FILE}"
-  if ! php -l "${CONFIG_FILE}" >/tmp/vtiger-install-config-lint.log 2>&1; then
-    err "Rendered config.inc.php failed php -l validation."
-    cat /tmp/vtiger-install-config-lint.log >&2 || true
-    exit 1
-  fi
+  local writable_paths=(
+    "${APP_ROOT}/logs"
+    "${APP_ROOT}/cache"
+    "${APP_ROOT}/storage"
+    "${APP_ROOT}/user_privileges"
+    "${APP_ROOT}/test"
+  )
+
+  for path in "${writable_paths[@]}"; do
+    mkdir -p "${path}"
+  done
+
+  chown -R www-data:www-data "${writable_paths[@]}" 2>/dev/null || true
+  chmod -R u+rwX,g+rwX "${writable_paths[@]}" 2>/dev/null || true
 }
 
 start_apache() {
@@ -254,7 +257,7 @@ verify_schema() {
 }
 
 main() {
-  render_config
+  prepare_install_state
   wait_for_mysql
   wait_for_app_user
   start_apache
