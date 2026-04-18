@@ -11,24 +11,69 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
 
-      - name: Run full local pipeline
-        run: ./build.sh --no-push
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Upload schema on failure
+      - name: Run full build pipeline
+        run: IMAGE=vtigercrm-nightly VERSION=8.3.0 ./build.sh --no-push
+
+      - name: Verify schema.sql
+        run: |
+          test -s schema.sql
+          LINES=$(wc -l < schema.sql)
+          echo "schema.sql: ${LINES} lines"
+          test "${LINES}" -gt 100
+
+      - name: Start runtime and smoke check
+        run: |
+          docker network create vtiger-nightly || true
+          docker run -d --name vtiger-nightly-mysql --network vtiger-nightly \
+            -e MYSQL_ROOT_PASSWORD=root \
+            -e MYSQL_DATABASE=vtiger \
+            -e MYSQL_USER=vtiger \
+            -e MYSQL_PASSWORD=vtigerpass \
+            mysql:8.0
+          for i in $(seq 1 60); do
+            docker exec vtiger-nightly-mysql mysqladmin ping -h localhost -uroot -proot --silent 2>/dev/null && break
+            sleep 3
+          done
+          docker run -d --name vtiger-nightly-app --network vtiger-nightly -p 8080:80 \
+            -e DB_HOST=vtiger-nightly-mysql \
+            -e DB_PORT=3306 \
+            -e DB_NAME=vtiger \
+            -e DB_USER=vtiger \
+            -e DB_PASSWORD=vtigerpass \
+            -e DB_ROOT_PASSWORD=root \
+            -e VTIGER_SITE_URL=http://localhost:8080 \
+            vtigercrm-nightly:8.3.0
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080 || true)"
+            if [ "$code" != "000" ] && [ -n "$code" ]; then
+              echo "HTTP ${code} — app is up."
+              exit 0
+            fi
+            echo "Attempt ${i}/60 — waiting for app..."
+            sleep 3
+          done
+          echo "Nightly smoke failed — app never responded on port 8080."
+          docker logs vtiger-nightly-app || true
+          exit 1
+
+      - name: Upload artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: nightly-debug
           retention-days: 7
-          path: |
-            schema.sql
+          path: schema.sql
 
       - name: Cleanup
         if: always()
         run: |
+          docker rm -f vtiger-nightly-app vtiger-nightly-mysql || true
+          docker network rm vtiger-nightly || true
           docker compose -f docker-compose.build.yml down -v || true
-          docker compose down -v || true

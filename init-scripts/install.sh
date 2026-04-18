@@ -16,7 +16,8 @@ DB_USER="${DB_USER:-vtiger}"
 DB_PASSWORD="${DB_PASSWORD:-vtigerpass}"
 DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-root}"
 
-VTIGER_SITE_URL="${VTIGER_SITE_URL:-http://localhost:${INSTALL_PORT}}"
+# Public-facing site URL stored in vtiger config — NOT used for the internal curl install request.
+VTIGER_SITE_URL="${VTIGER_SITE_URL:-http://localhost:8080}"
 VTIGER_ADMIN_USER="${VTIGER_ADMIN_USER:-admin}"
 VTIGER_ADMIN_PASSWORD="${VTIGER_ADMIN_PASSWORD:-Admin@1234}"
 VTIGER_ADMIN_EMAIL="${VTIGER_ADMIN_EMAIL:-admin@example.com}"
@@ -63,16 +64,16 @@ render_config() {
 }
 
 start_apache() {
-  log "Starting Apache on port ${INSTALL_PORT}..."
+  log "Starting Apache on 127.0.0.1:${INSTALL_PORT}..."
 
   a2enmod rewrite >/dev/null 2>&1 || true
   a2dissite 000-default >/dev/null 2>&1 || true
 
-  cat > /etc/apache2/ports.conf <<EOF
+  cat > /etc/apache2/ports.conf <<PORTS
 Listen 127.0.0.1:${INSTALL_PORT}
-EOF
+PORTS
 
-  cat > /etc/apache2/sites-available/vtiger-install.conf <<EOF
+  cat > /etc/apache2/sites-available/vtiger-install.conf <<VHOST
 <VirtualHost 127.0.0.1:${INSTALL_PORT}>
     ServerName localhost
     DocumentRoot ${APP_ROOT}
@@ -86,12 +87,12 @@ EOF
     ErrorLog /tmp/install-apache-error.log
     CustomLog /tmp/install-apache-access.log combined
 </VirtualHost>
-EOF
+VHOST
 
   a2ensite vtiger-install >/dev/null 2>&1 || true
 
   apache2ctl -k start 2>/tmp/install-apache-start.log || {
-    err "Apache failed: $(cat /tmp/install-apache-start.log)"
+    err "Apache failed to start: $(cat /tmp/install-apache-start.log)"
     exit 1
   }
 }
@@ -104,16 +105,21 @@ run_install() {
   local internal_url="http://127.0.0.1:${INSTALL_PORT}"
   local install_url="${internal_url}/index.php?module=Users&action=Install"
 
-  log "Waiting for Apache HTTP endpoint..."
+  log "Waiting for Apache on ${internal_url}..."
   for i in $(seq 1 60); do
-    if curl -fsS "${internal_url}/" >/dev/null 2>&1; then
+    if curl -sS -o /dev/null "${internal_url}/" 2>/dev/null; then
+      log "Apache responding (attempt ${i})."
       break
     fi
+    [ "$i" = "60" ] && { err "Apache never responded on ${internal_url}."; exit 1; }
     sleep 2
   done
 
-  log "Submitting installer request..."
-  curl -fsS -L "${install_url}" \
+  log "Submitting installer to ${install_url} (site_URL=${VTIGER_SITE_URL})..."
+  # Do not use -f or -L: vtiger redirects to VTIGER_SITE_URL on success, which may be
+  # unreachable from inside the installer container. Verify success via DB instead.
+  HTTP_CODE=$(curl -sS -o /tmp/vtiger-install-response.html -w '%{http_code}' \
+    --max-time 300 \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data-urlencode "dbname=${DB_NAME}" \
     --data-urlencode "dbusername=${DB_USER}" \
@@ -130,7 +136,28 @@ run_install() {
     --data-urlencode "default_language=${VTIGER_LANGUAGE}" \
     --data-urlencode "default_currency=${VTIGER_CURRENCY}" \
     --data-urlencode "company_name=${VTIGER_COMPANY_NAME}" \
-    >/tmp/vtiger-install-response.html
+    "${install_url}" 2>/dev/null || true)
+  log "Installer HTTP response code: ${HTTP_CODE}"
+}
+
+verify_schema() {
+  log "Verifying database schema..."
+  local table_count
+  table_count=$(mysql -N -s \
+    -h"${DB_HOST}" -P"${DB_PORT}" \
+    -uroot -p"${DB_ROOT_PASSWORD}" \
+    -e "SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema='${DB_NAME}'
+        AND table_name IN ('vtiger_users','vtiger_tab','vtiger_version','vtiger_field');" \
+    2>/dev/null || echo 0)
+  if [ "${table_count}" -lt 4 ]; then
+    err "Schema verification failed: expected 4 core tables, found ${table_count}."
+    if [ -f /tmp/vtiger-install-response.html ]; then
+      grep -iE 'error|fail|exception' /tmp/vtiger-install-response.html | head -20 || true
+    fi
+    exit 1
+  fi
+  log "Schema verified: ${table_count}/4 core tables present."
 }
 
 main() {
@@ -143,6 +170,9 @@ main() {
 
   run_install
   log "Installer request completed."
+
+  verify_schema
+  log "Installation successful."
 }
 
 main "$@"
