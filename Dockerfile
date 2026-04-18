@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxml2-dev \
         libzip-dev \
         libkrb5-dev \
-        libc-client-dev \
+        libc-client2007e-dev \
         libssl-dev \
         zlib1g-dev \
         libonig-dev \
