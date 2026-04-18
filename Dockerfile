@@ -19,17 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfreetype6-dev \
         libxml2-dev \
         libzip-dev \
-        uw-imap-dev \
         libkrb5-dev \
         libssl-dev \
         zlib1g-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
-    && docker-php-ext-install -j$(nproc) \
+    && PHP_OPENSSL=yes docker-php-ext-install -j$(nproc) \
         mysqli \
         pdo_mysql \
         gd \
-        imap \
         zip \
         xml \
         mbstring \
@@ -76,6 +73,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gettext-base \
     && a2enmod rewrite \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Build PHP IMAP extension against bundled c-client (no system libc-client needed)
+RUN cd /tmp && curl -fsSL https://pecl.php.net/get/imap || true \
+    && docker-php-source extract \
+    && cd /usr/src/php/ext/imap \
+    && phpize \
+    && ./configure --with-imap-ssl --with-kerberos \
+    && make -j$(nproc) \
+    && make install \
+    && docker-php-ext-enable imap \
+    && docker-php-source delete
 
 # Copy PHP extensions compiled in builder stage
 COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
