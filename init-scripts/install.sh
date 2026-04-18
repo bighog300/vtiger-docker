@@ -58,9 +58,15 @@ render_config() {
   export DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
   export VTIGER_SITE_URL VTIGER_ADMIN_USER VTIGER_ADMIN_PASSWORD VTIGER_ADMIN_EMAIL
   export VTIGER_TIMEZONE VTIGER_LANGUAGE VTIGER_CURRENCY VTIGER_COMPANY_NAME
+  local config_envsubst_vars='${DB_HOST} ${DB_PORT} ${DB_NAME} ${DB_USER} ${DB_PASSWORD} ${VTIGER_SITE_URL} ${VTIGER_ADMIN_USER} ${VTIGER_ADMIN_PASSWORD} ${VTIGER_ADMIN_EMAIL} ${VTIGER_TIMEZONE} ${VTIGER_LANGUAGE} ${VTIGER_CURRENCY} ${VTIGER_COMPANY_NAME}'
 
   mkdir -p "$(dirname "${CONFIG_FILE}")"
-  envsubst < "${CONFIG_TEMPLATE}" > "${CONFIG_FILE}"
+  envsubst "${config_envsubst_vars}" < "${CONFIG_TEMPLATE}" > "${CONFIG_FILE}"
+  if ! php -l "${CONFIG_FILE}" >/tmp/vtiger-install-config-lint.log 2>&1; then
+    err "Rendered config.inc.php failed php -l validation."
+    cat /tmp/vtiger-install-config-lint.log >&2 || true
+    exit 1
+  fi
 }
 
 start_apache() {
