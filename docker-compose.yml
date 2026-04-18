@@ -25,8 +25,8 @@ services:
     volumes:
       - vtiger-test-db:/var/lib/mysql
 
-  vtiger:
-    image: ghcr.io/bighog300/vtigercrm:8.3.0
+    vtiger:
+    image: vtigercrm-local:8.3.0
     container_name: vtiger-test
     depends_on:
       mysql:
