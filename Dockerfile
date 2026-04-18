@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libkrb5-dev \
         libssl-dev \
         zlib1g-dev \
+        libonig-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && PHP_OPENSSL=yes docker-php-ext-install -j$(nproc) \
         mysqli \
