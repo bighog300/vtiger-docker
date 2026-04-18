@@ -59,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfreetype6 \
         libxml2 \
         libzip4 \
+        libonig5 \
         curl \
         rsync \
         gettext-base \
