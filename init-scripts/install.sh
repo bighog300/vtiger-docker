@@ -119,10 +119,29 @@ run_install() {
   local headers_file="/tmp/vtiger-install-headers.txt"
   local body_file="/tmp/vtiger-install-body.html"
   local current_url="${install_url}"
+  local previous_step_label=""
+  local current_step_label=""
   local step_index
   local form_action
   local form_url
   local post_args=()
+
+  add_or_replace_field() {
+    local field_name="$1"
+    local field_value="$2"
+    local i
+    for ((i=${#post_args[@]}-1; i>=0; i--)); do
+      if [ "${post_args[$i]}" = "--data-urlencode" ] && [ $((i+1)) -lt ${#post_args[@]} ]; then
+        case "${post_args[$((i+1))]}" in
+          "${field_name}="*)
+            post_args[$((i+1))]="${field_name}=${field_value}"
+            return 0
+            ;;
+        esac
+      fi
+    done
+    post_args+=(--data-urlencode "${field_name}=${field_value}")
+  }
 
   extract_form_action() {
     perl -0777 -ne '
@@ -131,6 +150,61 @@ run_install() {
         $action =~ s/&amp;/&/g;
         print $action;
       }' "$1"
+  }
+
+  extract_step_label() {
+    local html_file="$1"
+    perl -0777 -ne '
+      sub decode {
+        my ($s) = @_;
+        $s =~ s/&nbsp;/ /g;
+        $s =~ s/&amp;/&/g;
+        $s =~ s/&quot;/"/g;
+        $s =~ s/&#39;/'"'"'/g;
+        $s =~ s/&lt;/</g;
+        $s =~ s/&gt;/>/g;
+        $s =~ s/<script\b[^>]*>.*?<\/script>//gis;
+        $s =~ s/<style\b[^>]*>.*?<\/style>//gis;
+        $s =~ s/<[^>]+>/ /g;
+        $s =~ s/\s+/ /g;
+        $s =~ s/^\s+|\s+$//g;
+        return $s;
+      }
+
+      my $html = $_;
+      my $label = "";
+
+      if ($html =~ /<li[^>]*class=["'"'"'"'"'"'"'"'"'][^"'"'"'"'"'"'"'"'"']*(?:active|current)[^"'"'"'"'"'"'"'"'"']*["'"'"'"'"'"'"'"'"'][^>]*>(.*?)<\/li>/is) {
+        $label = decode($1);
+      }
+      if (!$label && $html =~ /<h[1-4][^>]*>(.*?)<\/h[1-4]>/is) {
+        $label = decode($1);
+      }
+      if (!$label && $html =~ /<title[^>]*>(.*?)<\/title>/is) {
+        $label = decode($1);
+      }
+
+      my $text = decode($html);
+      my @known = (
+        "Welcome", "License", "Requirements", "Pre-Installation",
+        "System Configuration", "Database Information", "Database Configuration",
+        "Configure Database", "Company Details", "Confirmation", "Installation",
+        "Completed", "Finish"
+      );
+      if (!$label) {
+        for my $k (@known) {
+          if ($text =~ /\Q$k\E/i) {
+            $label = $k;
+            last;
+          }
+        }
+      }
+
+      $label = "Unknown" if !$label;
+      $label =~ s/\s+/ /g;
+      $label =~ s/^\s+|\s+$//g;
+      print $label;
+    ' "${html_file}"
   }
 
   append_hidden_fields() {
@@ -149,21 +223,131 @@ run_install() {
       }' "${html_file}")
   }
 
-  append_first_submit_field() {
+  append_checkbox_fields() {
+    local html_file="$1"
+    while IFS='=' read -r name value; do
+      [ -z "${name}" ] && continue
+      post_args+=(--data-urlencode "${name}=${value}")
+    done < <(perl -0777 -ne '
+      while (/<input\b[^>]*type=["'"'"'"'"'"'"'"'"']checkbox["'"'"'"'"'"'"'"'"'][^>]*>/ig) {
+        my $tag = $&;
+        next unless $tag =~ /name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i;
+        my $name = $1;
+        my $value = "on";
+        $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
+        my $include = 0;
+        $include = 1 if $tag =~ /\bchecked\b/i;
+        $include = 1 if $tag =~ /\brequired\b/i;
+        $include = 1 if $tag =~ /(accept|agree|license|terms)/i;
+        print "$name=$value\n" if $include;
+      }' "${html_file}")
+  }
+
+  append_radio_fields() {
+    local html_file="$1"
+    while IFS='=' read -r name value; do
+      [ -z "${name}" ] && continue
+      post_args+=(--data-urlencode "${name}=${value}")
+    done < <(perl -0777 -ne '
+      my %picked = ();
+      while (/<input\b[^>]*type=["'"'"'"'"'"'"'"'"']radio["'"'"'"'"'"'"'"'"'][^>]*>/ig) {
+        my $tag = $&;
+        next unless $tag =~ /name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i;
+        my $name = $1;
+        my $value = "";
+        $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
+        if (!exists $picked{$name}) {
+          $picked{$name} = $value;
+        }
+        if ($tag =~ /\bchecked\b/i) {
+          $picked{$name} = $value;
+        }
+      }
+      for my $name (sort keys %picked) {
+        print "$name=$picked{$name}\n";
+      }
+    ' "${html_file}")
+  }
+
+  append_select_fields() {
+    local html_file="$1"
+    while IFS='=' read -r name value; do
+      [ -z "${name}" ] && continue
+      post_args+=(--data-urlencode "${name}=${value}")
+    done < <(perl -0777 -ne '
+      while (/<select\b[^>]*name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"'][^>]*>(.*?)<\/select>/sig) {
+        my ($name, $body) = ($1, $2);
+        my $selected = "";
+        if ($body =~ /<option\b[^>]*selected[^>]*value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i) {
+          $selected = $1;
+        } elsif ($body =~ /<option\b[^>]*value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i) {
+          $selected = $1;
+        }
+        print "$name=$selected\n";
+      }
+    ' "${html_file}")
+  }
+
+  append_visible_text_fields() {
+    local html_file="$1"
+    while IFS='=' read -r name value; do
+      [ -z "${name}" ] && continue
+      post_args+=(--data-urlencode "${name}=${value}")
+    done < <(perl -0777 -ne '
+      while (/<input\b[^>]*type=["'"'"'"'"'"'"'"'"'](?:text|email|url|number|password)["'"'"'"'"'"'"'"'"'][^>]*>/ig) {
+        my $tag = $&;
+        next unless $tag =~ /name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i;
+        next if $tag =~ /\bdisabled\b/i;
+        my $name = $1;
+        my $value = "";
+        $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
+        print "$name=$value\n";
+      }
+    ' "${html_file}")
+  }
+
+  append_next_submit_field() {
     local html_file="$1"
     while IFS='=' read -r name value; do
       [ -z "${name}" ] && continue
       post_args+=(--data-urlencode "${name}=${value}")
       break
     done < <(perl -0777 -ne '
-      if (/<input[^>]*type=["'"'"'"'"'"'"'"'"']submit["'"'"'"'"'"'"'"'"'][^>]*>/is) {
-        $tag = $&;
-        if ($tag =~ /name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i) {
-          $name = $1;
-          $value = "";
-          $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
-          print "$name=$value\n";
+      my @candidates = ();
+      while (/<input\b[^>]*type=["'"'"'"'"'"'"'"'"']submit["'"'"'"'"'"'"'"'"'][^>]*>/ig) {
+        my $tag = $&;
+        next unless $tag =~ /name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i;
+        my $name = $1;
+        my $value = "";
+        $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
+        push @candidates, "$name=$value";
+      }
+      while (/<button\b[^>]*type=["'"'"'"'"'"'"'"'"']submit["'"'"'"'"'"'"'"'"'][^>]*>(.*?)<\/button>/ig) {
+        my $tag = $&;
+        my $text = $1 // "";
+        next unless $tag =~ /name=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']+)["'"'"'"'"'"'"'"'"']/i;
+        my $name = $1;
+        my $value = "";
+        $value = $1 if $tag =~ /value=["'"'"'"'"'"'"'"'"']([^"'"'"'"'"'"'"'"'"']*)["'"'"'"'"'"'"'"'"']/i;
+        $value = $text if $value eq "";
+        $text =~ s/<[^>]+>/ /g;
+        $text =~ s/\s+/ /g;
+        push @candidates, "$name=$value|$text";
+      }
+
+      my $best = "";
+      for my $c (@candidates) {
+        my $probe = $c;
+        if ($probe =~ /(next|continue|install|start|proceed|finish)/i) {
+          ($best = $c) =~ s/\|.*$//;
+          last;
         }
+        $best = $c unless $best;
+      }
+
+      if ($best) {
+        $best =~ s/\|.*$//;
+        print "$best\n";
       }' "${html_file}")
   }
 
@@ -178,6 +362,44 @@ run_install() {
     if [ -n "${csrf_name}" ] && [ -n "${csrf_value}" ]; then
       post_args+=(--data-urlencode "${csrf_name}=${csrf_value}")
     fi
+  }
+
+  append_step_specific_fields() {
+    local step_label="$1"
+
+    case "${step_label}" in
+      *Welcome*|*License*)
+        add_or_replace_field "accept_license" "on"
+        add_or_replace_field "agreement" "on"
+        add_or_replace_field "mode" "Requirements"
+        ;;
+      *Requirement*|*Pre-Installation*)
+        add_or_replace_field "mode" "Configuration"
+        ;;
+      *Database*|*Configuration*)
+        add_or_replace_field "db_type" "mysqli"
+        add_or_replace_field "db_hostname" "${DB_HOST}"
+        add_or_replace_field "db_port" "${DB_PORT}"
+        add_or_replace_field "dbname" "${DB_NAME}"
+        add_or_replace_field "dbusername" "${DB_USER}"
+        add_or_replace_field "dbpassword" "${DB_PASSWORD}"
+        add_or_replace_field "site_URL" "${VTIGER_SITE_URL}"
+        ;;
+      *Company*|*Admin*|*Details*)
+        add_or_replace_field "admin_name" "${VTIGER_ADMIN_USER}"
+        add_or_replace_field "admin_password" "${VTIGER_ADMIN_PASSWORD}"
+        add_or_replace_field "confirm_admin_password" "${VTIGER_ADMIN_PASSWORD}"
+        add_or_replace_field "admin_email" "${VTIGER_ADMIN_EMAIL}"
+        add_or_replace_field "timezone" "${VTIGER_TIMEZONE}"
+        add_or_replace_field "default_language" "${VTIGER_LANGUAGE}"
+        add_or_replace_field "default_currency" "${VTIGER_CURRENCY}"
+        add_or_replace_field "company_name" "${VTIGER_COMPANY_NAME}"
+        ;;
+      *Confirm*|*Installation*|*Final*|*Finish*)
+        add_or_replace_field "install" "on"
+        add_or_replace_field "mode" "Install"
+        ;;
+    esac
   }
 
   print_response_diagnostics() {
@@ -233,6 +455,9 @@ run_install() {
   cp "${body_file}" /tmp/vtiger-install-response.html
   log "Installer entry HTTP response code: ${HTTP_CODE}"
   print_response_diagnostics "${body_file}" "Step 1 (GET)"
+  previous_step_label=$(extract_step_label "${body_file}" || true)
+  previous_step_label="${previous_step_label:-Unknown}"
+  log "Installer visible step: ${previous_step_label}"
 
   for step_index in $(seq 1 8); do
     form_action=$(extract_form_action "${body_file}" || true)
@@ -251,27 +476,14 @@ run_install() {
     post_args=()
     append_hidden_fields "${body_file}"
     append_csrf_field "${body_file}"
-    append_first_submit_field "${body_file}"
-    post_args+=(
-      --data-urlencode "module=Install"
-      --data-urlencode "view=Index"
-      --data-urlencode "accept_license=on"
-      --data-urlencode "dbname=${DB_NAME}"
-      --data-urlencode "dbusername=${DB_USER}"
-      --data-urlencode "dbpassword=${DB_PASSWORD}"
-      --data-urlencode "db_type=mysqli"
-      --data-urlencode "db_hostname=${DB_HOST}"
-      --data-urlencode "db_port=${DB_PORT}"
-      --data-urlencode "site_URL=${VTIGER_SITE_URL}"
-      --data-urlencode "admin_name=${VTIGER_ADMIN_USER}"
-      --data-urlencode "admin_password=${VTIGER_ADMIN_PASSWORD}"
-      --data-urlencode "confirm_admin_password=${VTIGER_ADMIN_PASSWORD}"
-      --data-urlencode "admin_email=${VTIGER_ADMIN_EMAIL}"
-      --data-urlencode "timezone=${VTIGER_TIMEZONE}"
-      --data-urlencode "default_language=${VTIGER_LANGUAGE}"
-      --data-urlencode "default_currency=${VTIGER_CURRENCY}"
-      --data-urlencode "company_name=${VTIGER_COMPANY_NAME}"
-    )
+    append_checkbox_fields "${body_file}"
+    append_radio_fields "${body_file}"
+    append_select_fields "${body_file}"
+    append_visible_text_fields "${body_file}"
+    append_next_submit_field "${body_file}"
+    add_or_replace_field "module" "Install"
+    add_or_replace_field "view" "Index"
+    append_step_specific_fields "${previous_step_label}"
 
     # Do not use -f or -L: vtiger may redirect to VTIGER_SITE_URL on success, which can be
     # unreachable from inside the installer container. Verify success via DB instead.
@@ -285,13 +497,21 @@ run_install() {
     cp "${body_file}" /tmp/vtiger-install-response.html
     log "Installer submit HTTP response code: ${HTTP_CODE}"
     print_response_diagnostics "${body_file}" "Step $((step_index + 1)) (POST)"
+    current_step_label=$(extract_step_label "${body_file}" || true)
+    current_step_label="${current_step_label:-Unknown}"
+    log "Installer visible step after submit: ${current_step_label}"
 
     if grep -qi 'Invalid request' "${body_file}"; then
       err "Installer rejected step ${step_index} as Invalid request."
       return 1
     fi
+    if [ "${current_step_label}" = "${previous_step_label}" ]; then
+      err "Installer made no progress: still on step '${current_step_label}' after POST ${step_index}."
+      return 1
+    fi
 
     current_url="${form_url}"
+    previous_step_label="${current_step_label}"
   done
 }
 
