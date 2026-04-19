@@ -1,0 +1,226 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                ║
+║                      DOCKER BUILD FAILURE - IMMEDIATE FIX                     ║
+║                                                                                ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+
+🚨 YOUR ERROR
+═══════════════════════════════════════════════════════════════════════════════
+
+    composer install ... did not complete successfully: exit code: 2
+
+
+✅ FIX IT NOW (3 COMMANDS)
+═══════════════════════════════════════════════════════════════════════════════
+
+Copy & paste these 3 commands:
+
+    cd /path/to/vtiger-docker
+    export COMPOSER_MEMORY_LIMIT=-1
+    docker build --progress=plain --no-cache -t vtigercrm-local:8.3.0 -f Dockerfile .
+
+
+⏱️ TIMING
+═══════════════════════════════════════════════════════════════════════════════
+
+    Setup: 1 minute
+    Build: 15-25 minutes (just wait)
+    Total: 16-26 minutes
+
+
+📊 WHAT'S HAPPENING
+═══════════════════════════════════════════════════════════════════════════════
+
+Stage 1-4: Quick (system setup, git clone)
+Stage 5: COMPOSER INSTALL ← THIS IS WHERE IT FAILED
+  - Downloads 300+ PHP packages
+  - Requires 512MB+ memory
+  - Needs network access to packagist.org
+  - Takes 5-10 minutes
+  - CPU-intensive
+
+Our fix:
+  1. Clean old failed builds (fresh start)
+  2. Set unlimited memory (COMPOSER_MEMORY_LIMIT=-1)
+  3. No cache (--no-cache, forces complete rebuild)
+
+
+🔍 WHY IT FAILED
+═══════════════════════════════════════════════════════════════════════════════
+
+Most likely:
+  ❌ Docker memory limit too low
+  ❌ Network timeout during package download
+  ❌ Corrupted docker cache
+
+Less likely:
+  ❌ Dependency conflict (version mismatch)
+  ❌ Disk space exhausted
+  ❌ PHP extension missing
+
+
+✅ WHAT THE FIX DOES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. export COMPOSER_MEMORY_LIMIT=-1
+   → Tells composer to use as much memory as needed
+   → Removes memory constraints
+
+2. docker build --no-cache
+   → Throws away corrupted cache
+   → Builds everything from scratch
+   → Slower but reliable
+
+3. --progress=plain
+   → Shows detailed build progress
+   → You'll see exactly what's happening
+
+
+📋 STEP-BY-STEP
+═══════════════════════════════════════════════════════════════════════════════
+
+Step 1: Go to your repo
+    $ cd /path/to/vtiger-docker
+
+Step 2: Clean previous failed builds
+    $ docker system prune -a -f
+    $ docker builder prune -a -f
+
+Step 3: Set memory limit
+    $ export COMPOSER_MEMORY_LIMIT=-1
+
+Step 4: Start the build
+    $ docker build --progress=plain --no-cache \
+        -t vtigercrm-local:8.3.0 -f Dockerfile .
+
+Step 5: Wait 15-25 minutes
+    Watch the output. You'll see:
+    - "Sending build context..." (30 sec)
+    - "FROM php:8.3..." (builds layers)
+    - "RUN apt-get install..." (package install, 1-2 min)
+    - "RUN docker-php-ext-install..." (PHP extensions, 1-2 min)
+    - "RUN git clone..." (downloads vtiger, 1-2 min)
+    - "RUN composer install..." (THIS TAKES 5-10 MIN)
+    - "FROM php:8.3..." (runtime image, 1 min)
+    - "Successfully built..." ✅
+
+Step 6: Verify success
+    $ docker image ls | grep vtigercrm
+    Should show: vtigercrm-local:8.3.0
+
+
+🚀 AFTER BUILD SUCCEEDS
+═══════════════════════════════════════════════════════════════════════════════
+
+    # Start containers
+    $ docker compose up -d
+
+    # Wait for initialization
+    $ sleep 60
+
+    # Check it's running
+    $ docker compose ps
+
+    # Test access
+    $ curl http://localhost:8080
+
+    # View logs
+    $ docker compose logs -f
+
+    # Login
+    Username: admin
+    Password: Admin@1234
+
+
+⚠️ IF IT FAILS AGAIN
+═══════════════════════════════════════════════════════════════════════════════
+
+Option 1: Check system resources
+    $ free -h           (need 4GB+ RAM)
+    $ df -h             (need 10GB+ disk)
+    $ docker system df
+
+Option 2: Increase Docker memory limit
+    Docker Desktop:
+      Settings → Resources → Memory: 6GB → Apply & Restart
+    
+    Then retry:
+      $ ./build.sh --no-push
+
+Option 3: Debug the exact error
+    $ docker build --progress=plain --no-cache \
+        --target builder -t debug:8.3.0 -f Dockerfile . 2>&1 | tail -100
+    
+    Look for specific error message and search google for it
+
+Option 4: Manual intervention
+    $ docker run -it php:8.3-apache-bookworm /bin/bash
+    # Inside container:
+    # $ apt-get update && apt-get install -y git curl
+    # $ git clone https://github.com/bighog300/vtigercrm.git /app
+    # $ cd /app
+    # $ composer install --no-dev
+    # See exact error, then fix
+
+
+📞 COMMON ERRORS & FIXES
+═══════════════════════════════════════════════════════════════════════════════
+
+Error: "Killed" or "killed container"
+  → Memory limit exceeded
+  → Fix: export COMPOSER_MEMORY_LIMIT=-1
+  → Also increase Docker memory to 6GB
+
+Error: "Connection timeout" / "Package not found"
+  → Network issue
+  → Fix: Check internet, retry build
+  → Or wait a moment and try again
+
+Error: "Your requirements could not be resolved"
+  → Dependency conflict
+  → Fix: This is rare, but try:
+    $ rm -rf ~/.composer/cache/*
+    $ ./build.sh --no-push
+
+Error: "no space left on device"
+  → Disk full
+  → Fix: Free up disk space (10GB minimum)
+  → $ docker system prune -a
+  → $ df -h
+
+
+✅ VERIFICATION CHECKLIST
+═══════════════════════════════════════════════════════════════════════════════
+
+After running the 3 commands:
+
+☐ No "Error" messages in output
+☐ Sees "RUN composer install"
+☐ That step completes (doesn't say "Killed")
+☐ Later sees "Successfully built..."
+☐ $ docker image ls shows vtigercrm-local:8.3.0
+☐ Image size is ~800MB (not tiny)
+
+
+🎯 IF ALL ELSE FAILS
+═══════════════════════════════════════════════════════════════════════════════
+
+Nuclear option (removes ALL docker images/volumes):
+
+    $ docker system prune -a -f --volumes
+    $ sudo systemctl restart docker    (Linux)
+    $ # Restart Docker Desktop         (Mac/Windows)
+    $ cd /path/to/vtiger-docker
+    $ ./build.sh --no-push
+
+This is destructive but guaranteed to work if the build was the problem.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+                    Ready? Run the 3 commands! ⚡
+
+                Expected result: Build success in 20-25 min
+
+═══════════════════════════════════════════════════════════════════════════════
