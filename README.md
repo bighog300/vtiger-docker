@@ -27,7 +27,7 @@ start if the target database is empty.
 ./build.sh --no-push
 ```
 
-This builds and tags `ghcr.io/bighog300/vtigercrm:8.3.0` locally.
+This builds and tags `vtigercrm-local:8.3.0` locally by default when `--no-push` is used.
 To use a different local image name:
 
 ```bash
@@ -41,9 +41,15 @@ The pipeline steps:
 4. Tear down the build stack
 5. Build the `runtime` image with `schema.sql` baked in
 
+## Important build note
+
+`schema.sql` is intentionally generated during `./build.sh --no-push`.
+A plain `docker build .` or `docker compose build` will fail until that file exists,
+because the runtime image bakes the generated schema into `/opt/vtiger/schema.sql`.
+
 ## Local smoke test
 
-After running `build.sh --no-push` with the default image name:
+After running `build.sh --no-push` with the default local image name:
 
 ```bash
 docker compose up -d
@@ -116,3 +122,23 @@ Only the `runtime` stage is published. The `builder` stage is not pushed.
 | `VTIGER_LANGUAGE` | `en_us` | Default language |
 | `VTIGER_CURRENCY` | `USD` | Default currency |
 | `VTIGER_COMPANY_NAME` | `VEMS` | Company name shown in the UI |
+
+## Browser installer flow
+
+To build the vtiger web image from `https://github.com/bighog300/vtigercrm` and launch the UI installer without running the headless automation:
+
+```bash
+./install-ui.sh
+```
+
+Then open:
+
+```text
+http://localhost:8080/index.php?module=Install&view=Index
+```
+
+Optional overrides:
+
+```bash
+VTIGER_REPO_REF=main APP_PORT=8081 ./install-ui.sh
+```
