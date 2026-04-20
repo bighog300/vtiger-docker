@@ -545,15 +545,15 @@ run_install() {
     local step_label="$1"
 
     case "${step_label}" in
-      *Welcome*|*License*)
+      Step1|*Welcome*|*License*)
         add_or_replace_field "accept_license" "on"
         add_or_replace_field "agreement" "on"
         add_or_replace_field "mode" "Requirements"
         ;;
-      *Requirement*|*Pre-Installation*)
+      Step3|*Requirement*|*Pre-Installation*)
         add_or_replace_field "mode" "Configuration"
         ;;
-      *Database*|*Configuration*)
+      Step4|*Database*|*Configuration*)
         add_or_replace_field "db_type" "mysqli"
         add_or_replace_field "db_hostname" "${DB_HOST}"
         add_or_replace_field "db_port" "${DB_PORT}"
@@ -562,7 +562,7 @@ run_install() {
         add_or_replace_field "dbpassword" "${DB_PASSWORD}"
         add_or_replace_field "site_URL" "${VTIGER_SITE_URL}"
         ;;
-      *Company*|*Admin*|*Details*)
+      Step5|*Company*|*Admin*|*Details*)
         add_or_replace_field "admin_name" "${VTIGER_ADMIN_USER}"
         add_or_replace_field "admin_password" "${VTIGER_ADMIN_PASSWORD}"
         add_or_replace_field "confirm_admin_password" "${VTIGER_ADMIN_PASSWORD}"
@@ -572,7 +572,7 @@ run_install() {
         add_or_replace_field "default_currency" "${VTIGER_CURRENCY}"
         add_or_replace_field "company_name" "${VTIGER_COMPANY_NAME}"
         ;;
-      *Confirm*|*Final*|*Finish*)
+      Step6|Step7|*Confirm*|*Final*|*Finish*)
         add_or_replace_field "install" "on"
         add_or_replace_field "mode" "Install"
         ;;
