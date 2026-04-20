@@ -1,0 +1,32 @@
+--- /home/claude/install.sh.original	2026-04-18 16:28:03.849978914 +0000
++++ /home/claude/install.sh.patched	2026-04-18 16:28:14.725973940 +0000
+@@ -626,12 +626,23 @@
+ 
+     post_args=()
+     if [ "${previous_step_mode}" = "Step2" ]; then
+-      append_hidden_fields_for_mode "${body_file}" "Step2"
+-      append_csrf_field "${body_file}"
+-      append_step2_controls "${body_file}"
+-      add_or_replace_field "module" "Install"
+-      add_or_replace_field "view" "Index"
+-      log_payload_field_names "Step2"
++      log "Step2 is a license agreement (GET form, no data submission)."
++      log "Form method=get; proceeding with URL parameters to mode=Step3."
++      # Step2 form uses GET, not POST. Form is:
++      #   <form method="get" action="index.php">
++      #     <input type=hidden name="module" value="Install" />
++      #     <input type=hidden name="view" value="Index" />
++      #     <input type=hidden name="mode" value="Step3" />
++      #     <input type="submit" value="I Agree" />
++      #   </form>
++      # Use curl --get to send parameters as query string, not POST data.
++      post_args=(
++        --get
++        --data-urlencode "module=Install"
++        --data-urlencode "view=Index"
++        --data-urlencode "mode=Step3"
++      )
++      log_payload_field_names "Step2 (GET request)"
+     else
+       append_hidden_fields "${body_file}"
+       append_csrf_field "${body_file}"

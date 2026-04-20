@@ -1,0 +1,48 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: vtiger-build-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: buildroot
+      MYSQL_DATABASE:      vtiger
+      MYSQL_USER:          vtiger
+      MYSQL_PASSWORD:      vtigerpass
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pbuildroot"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - vtiger-build-db:/var/lib/mysql
+
+  installer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: vtiger-build-installer
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST:                mysql
+      DB_PORT:                3306
+      DB_NAME:                vtiger
+      DB_USER:                vtiger
+      DB_PASSWORD:            vtigerpass
+      DB_ROOT_PASSWORD:       buildroot
+      VTIGER_SITE_URL:        http://localhost:8080
+      VTIGER_ADMIN_USER:      admin
+      VTIGER_ADMIN_PASSWORD:  Admin@1234
+      VTIGER_ADMIN_EMAIL:     admin@example.com
+      VTIGER_TIMEZONE:        UTC
+      VTIGER_LANGUAGE:        en_us
+      VTIGER_CURRENCY:        USD
+      VTIGER_COMPANY_NAME:    VEMS
+    entrypoint: ["/build/install.sh"]
+    restart: "no"
+
+volumes:
+  vtiger-build-db:

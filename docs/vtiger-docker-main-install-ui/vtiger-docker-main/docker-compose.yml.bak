@@ -1,0 +1,48 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: vtiger-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${DB_NAME:-vtiger}
+      MYSQL_USER: ${DB_USER:-vtiger}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-vtigerpass}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - vtiger-test-db:/var/lib/mysql
+
+  vtiger:
+    image: vtigercrm-local:8.3.0
+    container_name: vtiger-test
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-vtiger}
+      DB_USER: ${DB_USER:-vtiger}
+      DB_PASSWORD: ${DB_PASSWORD:-vtigerpass}
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      VTIGER_SITE_URL: http://localhost:8080
+      VTIGER_ADMIN_USER: ${VTIGER_ADMIN_USER:-admin}
+      VTIGER_ADMIN_PASSWORD: ${VTIGER_ADMIN_PASSWORD:-Admin@1234}
+      VTIGER_ADMIN_EMAIL: ${VTIGER_ADMIN_EMAIL:-admin@example.com}
+      VTIGER_TIMEZONE: ${VTIGER_TIMEZONE:-UTC}
+      VTIGER_LANGUAGE: ${VTIGER_LANGUAGE:-en_us}
+      VTIGER_CURRENCY: ${VTIGER_CURRENCY:-USD}
+      VTIGER_COMPANY_NAME: ${VTIGER_COMPANY_NAME:-VEMS}
+    ports:
+      - "8080:80"
+    volumes:
+      - vtiger-test-storage:/var/www/html/storage
+      - vtiger-test-logs:/var/www/html/logs
+
+volumes:
+  vtiger-test-db:
+  vtiger-test-storage:
+  vtiger-test-logs:
