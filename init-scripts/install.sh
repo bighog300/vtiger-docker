@@ -748,7 +748,7 @@ run_install() {
       log "Installer completion marker detected after step ${step_index}."
       break
     fi
-    if [ "${saw_noninitial_step}" -eq 1 ] && { [[ "${current_step_label}" =~ (Welcome|Installation[[:space:]]Wizard) ]] || [ "${current_step_mode}" = "Step2" ]; }; then
+    if [ "${saw_noninitial_step}" -eq 1 ] && { [[ "${current_step_label}" =~ (Welcome) ]] || [ "${current_step_mode}" = "Step2" ]; }; then
       err "Installer reset to welcome page after step ${step_index}; likely missing required fields or invalid submission."
       if validation_errors=$(extract_validation_messages "${body_file}" || true) && [ -n "${validation_errors}" ]; then
         log "Validation-like messages detected:"
