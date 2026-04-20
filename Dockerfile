@@ -16,10 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxml2-dev \
         libzip-dev \
         libssl-dev \
+        libc-client-dev \
+        libkrb5-dev \
         zlib1g-dev \
         libonig-dev \
         gettext-base \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
     && docker-php-ext-install -j$(nproc) \
         mysqli \
         pdo_mysql \
@@ -28,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xml \
         mbstring \
         soap \
+        imap \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -61,6 +65,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxml2 \
         libzip4 \
         libonig5 \
+        libc-client2007e \
+        libkrb5-3 \
         curl \
         rsync \
         gettext-base \
