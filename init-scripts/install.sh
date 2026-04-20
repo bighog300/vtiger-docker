@@ -713,6 +713,7 @@ run_install() {
       append_next_submit_field "${body_file}"
       add_or_replace_field "module" "Install"
       add_or_replace_field "view" "Index"
+      log "Step ${step_index} specific fields: matching on mode='${previous_step_mode}'"
       append_step_specific_fields "${previous_step_mode}"
       log_payload_field_names "Step ${step_index}"
     fi
