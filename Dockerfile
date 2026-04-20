@@ -37,8 +37,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
+ARG VTIGER_REPO_URL=https://github.com/bighog300/vtigercrm.git
+ARG VTIGER_REPO_REF=
+
 WORKDIR /app
-RUN git clone --depth=1 https://github.com/bighog300/vtigercrm.git .
+RUN set -eux;     if [ -n "$VTIGER_REPO_REF" ]; then       git clone --depth=1 --branch "$VTIGER_REPO_REF" "$VTIGER_REPO_URL" .;     else       git clone --depth=1 "$VTIGER_REPO_URL" .;     fi
 RUN composer install --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader
 
 COPY init-scripts/install.sh        /build/install.sh
