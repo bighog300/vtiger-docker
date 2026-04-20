@@ -123,6 +123,9 @@ run_install() {
   local current_step_label=""
   local previous_step_mode=""
   local current_step_mode=""
+  local saw_noninitial_step=0
+  local install_completed=0
+  local max_steps=15
   local step_index
   local form_action
   local form_url
@@ -611,6 +614,31 @@ run_install() {
     sed -n '1,40p' "${html_file}" | sed 's/<[^>]*>//g' | sed '/^[[:space:]]*$/d' | head -12 | sed 's/^/[vtiger-install]    /' || true
   }
 
+  extract_validation_messages() {
+    local html_file="$1"
+    perl -0777 -ne '
+      my $html = $_;
+      my @matches = ();
+      while ($html =~ m{<(?:div|span|li|p)[^>]*class=["'"'"'][^"'"'"']*(?:error|errors|validation|alert-danger|text-danger)[^"'"'"']*["'"'"'][^>]*>(.*?)</(?:div|span|li|p)>}sig) {
+        my $msg = $1 // "";
+        $msg =~ s/<[^>]+>/ /g;
+        $msg =~ s/\s+/ /g;
+        $msg =~ s/^\s+|\s+$//g;
+        push @matches, $msg if $msg ne "";
+      }
+      if (!@matches && $html =~ /(please\s+enter[^<\n]*|required\s+field[^<\n]*|invalid[^<\n]*|cannot\s+be\s+empty[^<\n]*)/ig) {
+        push @matches, $1 while $html =~ /(please\s+enter[^<\n]*|required\s+field[^<\n]*|invalid[^<\n]*|cannot\s+be\s+empty[^<\n]*)/ig;
+      }
+      my %seen = ();
+      my $count = 0;
+      for my $m (@matches) {
+        next if $seen{$m}++;
+        print "$m\n";
+        last if ++$count >= 5;
+      }
+    ' "${html_file}"
+  }
+
   log "Waiting for Apache on ${internal_url}..."
   for i in $(seq 1 60); do
     if curl -sS -o /dev/null "${internal_url}/" 2>/dev/null; then
@@ -636,7 +664,7 @@ run_install() {
   log "Installer visible step: ${previous_step_label}"
   log "Installer mode marker: ${previous_step_mode}"
 
-  for step_index in $(seq 1 8); do
+  for step_index in $(seq 1 "${max_steps}"); do
     form_action=""
     request_method="post"
     if [ "${previous_step_mode}" = "Step2" ]; then
@@ -647,7 +675,12 @@ run_install() {
     [ -n "${form_action}" ] || form_action=$(extract_form_action "${body_file}" || true)
 
     if [ -z "${form_action}" ]; then
-      log "No installer form action found after step ${step_index}; assuming wizard finished or redirected."
+      if grep -qiE 'installation completed|login|dashboard|sign in' "${body_file}"; then
+        install_completed=1
+        log "No installer form action found after step ${step_index}; completion marker detected."
+        break
+      fi
+      err "No installer form action found after step ${step_index}, and no completion marker detected."
       break
     fi
 
@@ -702,20 +735,57 @@ run_install() {
     current_step_mode="${current_step_mode:-Unknown}"
     log "Installer visible step after submit: ${current_step_label}"
     log "Installer mode marker after submit: ${current_step_mode}"
+    if [ "${current_step_mode}" != "Step2" ] && [ "${current_step_mode}" != "Unknown" ]; then
+      saw_noninitial_step=1
+    fi
 
     if grep -qi 'Invalid request' "${body_file}"; then
       err "Installer rejected step ${step_index} as Invalid request."
       return 1
     fi
+    if grep -qiE 'installation completed|login|dashboard|sign in' "${body_file}"; then
+      install_completed=1
+      log "Installer completion marker detected after step ${step_index}."
+      break
+    fi
+    if [ "${saw_noninitial_step}" -eq 1 ] && { [[ "${current_step_label}" =~ (Welcome|Installation[[:space:]]Wizard) ]] || [ "${current_step_mode}" = "Step2" ]; }; then
+      err "Installer reset to welcome page after step ${step_index}; likely missing required fields or invalid submission."
+      if validation_errors=$(extract_validation_messages "${body_file}" || true) && [ -n "${validation_errors}" ]; then
+        log "Validation-like messages detected:"
+        echo "${validation_errors}" | sed 's/^/[vtiger-install]   - /'
+      else
+        log "Validation-like messages detected: none"
+      fi
+      return 1
+    fi
     if [ "${current_step_label}" = "${previous_step_label}" ] && [ "${current_step_mode}" = "${previous_step_mode}" ]; then
       err "Installer made no progress: still on step '${current_step_label}' (mode '${current_step_mode}') after POST ${step_index}."
+      if validation_errors=$(extract_validation_messages "${body_file}" || true) && [ -n "${validation_errors}" ]; then
+        log "Validation-like messages detected:"
+        echo "${validation_errors}" | sed 's/^/[vtiger-install]   - /'
+      else
+        log "Validation-like messages detected: none"
+      fi
       return 1
+    fi
+    if grep -qiE 'step[[:space:]]*[0-9]|installation wizard|install vtiger' "${body_file}"; then
+      if validation_errors=$(extract_validation_messages "${body_file}" || true) && [ -n "${validation_errors}" ]; then
+        log "Step ${step_index} remained on installer page with validation-like messages:"
+        echo "${validation_errors}" | sed 's/^/[vtiger-install]   - /'
+      else
+        log "Step ${step_index} remained on installer page; no obvious validation messages found."
+      fi
     fi
 
     current_url="${form_url}"
     previous_step_label="${current_step_label}"
     previous_step_mode="${current_step_mode}"
   done
+
+  if [ "${install_completed}" -ne 1 ]; then
+    err "Installer did not reach a completion marker within ${max_steps} submissions."
+    return 1
+  fi
 }
 
 verify_schema() {
@@ -747,7 +817,7 @@ main() {
   trap 'stop_apache' EXIT
 
   run_install
-  log "Installer request completed."
+  log "Installer request completed (completion marker detected)."
 
   verify_schema
   log "Installation successful."
