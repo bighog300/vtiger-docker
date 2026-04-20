@@ -158,8 +158,12 @@ run_install() {
   extract_form_action_for_mode() {
     local html_file="$1"
     local mode_value="$2"
-    perl -0777 -ne '
-      my ($html, $mode) = @ARGV;
+    perl -0777 -e '
+      my ($html_file, $mode) = @ARGV;
+      local $/;
+      open my $fh, "<", $html_file or die "Cannot open $html_file: $!";
+      my $html = <$fh>;
+      close $fh;
       while ($html =~ m{(<form\b[^>]*>.*?</form>)}sig) {
         my $form = $1;
         next unless $form =~ /name=["'"'"']mode["'"'"'][^>]*value=["'"'"']\Q$mode\E["'"'"']/i
@@ -177,8 +181,12 @@ run_install() {
   extract_form_method_for_mode() {
     local html_file="$1"
     local mode_value="$2"
-    perl -0777 -ne '
-      my ($html, $mode) = @ARGV;
+    perl -0777 -e '
+      my ($html_file, $mode) = @ARGV;
+      local $/;
+      open my $fh, "<", $html_file or die "Cannot open $html_file: $!";
+      my $html = <$fh>;
+      close $fh;
       while ($html =~ m{(<form\b[^>]*>.*?</form>)}sig) {
         my $form = $1;
         next unless $form =~ /name=["'"'"']mode["'"'"'][^>]*value=["'"'"']\Q$mode\E["'"'"']/i
@@ -277,8 +285,12 @@ run_install() {
     while IFS='=' read -r name value; do
       [ -z "${name}" ] && continue
       post_args+=(--data-urlencode "${name}=${value}")
-    done < <(perl -0777 -ne '
-      my ($html, $mode) = @ARGV;
+    done < <(perl -0777 -e '
+      my ($html_file, $mode) = @ARGV;
+      local $/;
+      open my $fh, "<", $html_file or die "Cannot open $html_file: $!";
+      my $html = <$fh>;
+      close $fh;
       while ($html =~ m{(<form\b[^>]*>.*?</form>)}sig) {
         my $form = $1;
         next unless $form =~ /name=["'"'"']mode["'"'"'][^>]*value=["'"'"']\Q$mode\E["'"'"']/i
