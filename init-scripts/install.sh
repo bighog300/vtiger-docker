@@ -735,7 +735,7 @@ run_install() {
     current_step_mode="${current_step_mode:-Unknown}"
     log "Installer visible step after submit: ${current_step_label}"
     log "Installer mode marker after submit: ${current_step_mode}"
-    if [ "${current_step_mode}" != "Step2" ] && [ "${current_step_mode}" != "Unknown" ]; then
+    if [ "${current_step_mode}" != "Step2" ] && [ "${current_step_mode}" != "Unknown" ] && [ "${step_index}" -gt 1 ]; then
       saw_noninitial_step=1
     fi
 
