@@ -572,7 +572,7 @@ run_install() {
         add_or_replace_field "default_currency" "${VTIGER_CURRENCY}"
         add_or_replace_field "company_name" "${VTIGER_COMPANY_NAME}"
         ;;
-      *Confirm*|*Installation*|*Final*|*Finish*)
+      *Confirm*|*Final*|*Finish*)
         add_or_replace_field "install" "on"
         add_or_replace_field "mode" "Install"
         ;;
