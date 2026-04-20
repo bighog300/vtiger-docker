@@ -545,15 +545,15 @@ run_install() {
     local step_label="$1"
 
     case "${step_label}" in
-      Step1|*Welcome*|*License*)
+      *Welcome*|*License*)
         add_or_replace_field "accept_license" "on"
         add_or_replace_field "agreement" "on"
         add_or_replace_field "mode" "Requirements"
         ;;
-      Step3|*Requirement*|*Pre-Installation*)
+      *Requirement*|*Pre-Installation*)
         add_or_replace_field "mode" "Configuration"
         ;;
-      Step4|*Database*|*Configuration*)
+      *Database*|*Configuration*)
         add_or_replace_field "db_type" "mysqli"
         add_or_replace_field "db_hostname" "${DB_HOST}"
         add_or_replace_field "db_port" "${DB_PORT}"
@@ -562,7 +562,7 @@ run_install() {
         add_or_replace_field "dbpassword" "${DB_PASSWORD}"
         add_or_replace_field "site_URL" "${VTIGER_SITE_URL}"
         ;;
-      Step5|*Company*|*Admin*|*Details*)
+      *Company*|*Admin*|*Details*)
         add_or_replace_field "admin_name" "${VTIGER_ADMIN_USER}"
         add_or_replace_field "admin_password" "${VTIGER_ADMIN_PASSWORD}"
         add_or_replace_field "confirm_admin_password" "${VTIGER_ADMIN_PASSWORD}"
@@ -572,7 +572,7 @@ run_install() {
         add_or_replace_field "default_currency" "${VTIGER_CURRENCY}"
         add_or_replace_field "company_name" "${VTIGER_COMPANY_NAME}"
         ;;
-      Step6|Step7|*Confirm*|*Final*|*Finish*)
+      *Confirm*|*Installation*|*Final*|*Finish*)
         add_or_replace_field "install" "on"
         add_or_replace_field "mode" "Install"
         ;;
@@ -713,8 +713,7 @@ run_install() {
       append_next_submit_field "${body_file}"
       add_or_replace_field "module" "Install"
       add_or_replace_field "view" "Index"
-      log "Step ${step_index} specific fields: matching on mode='${previous_step_mode}'"
-      append_step_specific_fields "${previous_step_mode}"
+      append_step_specific_fields "${previous_step_label}"
       log_payload_field_names "Step ${step_index}"
     fi
 
@@ -736,7 +735,7 @@ run_install() {
     current_step_mode="${current_step_mode:-Unknown}"
     log "Installer visible step after submit: ${current_step_label}"
     log "Installer mode marker after submit: ${current_step_mode}"
-    if [ "${current_step_mode}" != "Step2" ] && [ "${current_step_mode}" != "Unknown" ] && [ "${step_index}" -gt 1 ]; then
+    if [ "${current_step_mode}" != "Step2" ] && [ "${current_step_mode}" != "Unknown" ]; then
       saw_noninitial_step=1
     fi
 
@@ -749,7 +748,7 @@ run_install() {
       log "Installer completion marker detected after step ${step_index}."
       break
     fi
-    if [ "${saw_noninitial_step}" -eq 1 ] && { [[ "${current_step_label}" =~ (Welcome) ]] || [ "${current_step_mode}" = "Step2" ]; }; then
+    if [ "${saw_noninitial_step}" -eq 1 ] && { [[ "${current_step_label}" =~ (Welcome|Installation[[:space:]]Wizard) ]] || [ "${current_step_mode}" = "Step2" ]; }; then
       err "Installer reset to welcome page after step ${step_index}; likely missing required fields or invalid submission."
       if validation_errors=$(extract_validation_messages "${body_file}" || true) && [ -n "${validation_errors}" ]; then
         log "Validation-like messages detected:"
